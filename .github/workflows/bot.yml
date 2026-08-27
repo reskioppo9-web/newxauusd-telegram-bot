@@ -3,6 +3,9 @@ name: Test XAUUSD Telegram Bot
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "2,32 * * * *"
+
 jobs:
   test:
     runs-on: ubuntu-latest
