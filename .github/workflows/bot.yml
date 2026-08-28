@@ -2,7 +2,7 @@ name: XAUUSD Telegram Bot Auto
 
 on:
   schedule:
-    - cron: "*/7,22,37,52 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:
