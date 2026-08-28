@@ -1,4 +1,4 @@
-name: XAUUSD Telegram Bot
+name: XAUUSD Telegram Bot Auto
 
 on:
   schedule:
