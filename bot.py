@@ -2,8 +2,8 @@ import os
 import requests
 import pandas as pd
 # =========================================================
-# XAUUSD AI-STYLE SCANNER V1.4
-# SMART FILTER + MARKET STRUCTURE
+# XAUUSD AI-STYLE V1.5
+# SMART S/R + ENTRY QUALITY
 # =========================================================
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -133,9 +133,12 @@ def analyze_timeframe(interval):
         "time": latest["datetime"]
     }
 # =========================================================
-# SWINGS
+# SWING DETECTION
 # =========================================================
-def find_swings(df, lookback=2):
+def find_swings(
+    df,
+    lookback=3
+):
     closed = df.iloc[:-1].copy()
     highs = []
     lows = []
@@ -145,21 +148,21 @@ def find_swings(df, lookback=2):
     ):
         high = closed.iloc[i]["high"]
         low = closed.iloc[i]["low"]
-        left_highs = closed.iloc[
+        left_high = closed.iloc[
             i - lookback:i
         ]["high"]
-        right_highs = closed.iloc[
+        right_high = closed.iloc[
             i + 1:i + 1 + lookback
         ]["high"]
-        left_lows = closed.iloc[
+        left_low = closed.iloc[
             i - lookback:i
         ]["low"]
-        right_lows = closed.iloc[
+        right_low = closed.iloc[
             i + 1:i + 1 + lookback
         ]["low"]
         if (
-            high > left_highs.max()
-            and high > right_highs.max()
+            high > left_high.max()
+            and high > right_high.max()
         ):
             highs.append(
                 {
@@ -168,8 +171,8 @@ def find_swings(df, lookback=2):
                 }
             )
         if (
-            low < left_lows.min()
-            and low < right_lows.min()
+            low < left_low.min()
+            and low < right_low.min()
         ):
             lows.append(
                 {
@@ -213,13 +216,9 @@ def detect_market_structure(df):
         and low_type == "LL"
     ):
         structure = "BEARISH"
-    elif high_type == "HH":
+    elif high_type in ["HH", "HL"]:
         structure = "BULLISH"
-    elif low_type == "HL":
-        structure = "BULLISH"
-    elif high_type == "LH":
-        structure = "BEARISH"
-    elif low_type == "LL":
+    elif low_type in ["LL", "LH"]:
         structure = "BEARISH"
     else:
         structure = "NEUTRAL"
@@ -358,34 +357,47 @@ def detect_liquidity_sweep(df):
         return "BEARISH LIQUIDITY SWEEP"
     return "NONE"
 # =========================================================
-# SUPPORT / RESISTANCE
+# SMART SUPPORT / RESISTANCE
 # =========================================================
-def get_support_resistance(df):
+def smart_levels(
+    df,
+    atr
+):
     closed = df.iloc[:-1].copy()
-    current_price = closed.iloc[-1]["close"]
-    recent = closed.tail(100)
-    supports = sorted(
-        recent["low"].unique()
+    price = closed.iloc[-1]["close"]
+    highs, lows = find_swings(
+        df,
+        lookback=3
     )
-    resistances = sorted(
-        recent["high"].unique()
-    )
-    below = [
-        x for x in supports
-        if x < current_price
-    ]
-    above = [
-        x for x in resistances
-        if x > current_price
-    ]
-    if below:
-        support = max(below)
+    min_distance = atr * 1.5
+    supports = []
+    resistances = []
+    for swing in lows:
+        level = swing["price"]
+        if (
+            level < price
+            and price - level >= min_distance
+        ):
+            supports.append(level)
+    for swing in highs:
+        level = swing["price"]
+        if (
+            level > price
+            and level - price >= min_distance
+        ):
+            resistances.append(level)
+    if supports:
+        support = max(supports)
     else:
-        support = recent["low"].min()
-    if above:
-        resistance = min(above)
+        support = price - (
+            atr * 3
+        )
+    if resistances:
+        resistance = min(resistances)
     else:
-        resistance = recent["high"].max()
+        resistance = price + (
+            atr * 3
+        )
     return support, resistance
 # =========================================================
 # BREAKOUT
@@ -402,33 +414,6 @@ def detect_breakout(df):
         return "BEARISH BREAKOUT"
     return "NONE"
 # =========================================================
-# LOCATION FILTER
-# =========================================================
-def location_filter(
-    price,
-    support,
-    resistance,
-    atr,
-    direction
-):
-    if atr <= 0:
-        return True
-    distance_support = (
-        price - support
-    )
-    distance_resistance = (
-        resistance - price
-    )
-    # Jangan SELL terlalu dekat support
-    if direction == "SELL":
-        if distance_support <= atr * 1.5:
-            return False
-    # Jangan BUY terlalu dekat resistance
-    if direction == "BUY":
-        if distance_resistance <= atr * 1.5:
-            return False
-    return True
-# =========================================================
 # SCORE
 # =========================================================
 def calculate_score(
@@ -440,29 +425,23 @@ def calculate_score(
     bos_choch,
     candle,
     sweep,
-    breakout,
-    price,
-    support,
-    resistance
+    breakout
 ):
     buy = 0
     sell = 0
-    # H4
+    # TREND
     if h4["trend"] == "BULLISH":
         buy += 15
     elif h4["trend"] == "BEARISH":
         sell += 15
-    # H1
     if h1["trend"] == "BULLISH":
         buy += 20
     elif h1["trend"] == "BEARISH":
         sell += 20
-    # M30
     if m30["trend"] == "BULLISH":
         buy += 15
     elif m30["trend"] == "BEARISH":
         sell += 15
-    # M15
     if m15["trend"] == "BULLISH":
         buy += 10
     elif m15["trend"] == "BEARISH":
@@ -478,32 +457,31 @@ def calculate_score(
         and m30["rsi"] > 30
     ):
         sell += 10
-    # Structure
+    # STRUCTURE
     if structure["structure"] == "BULLISH":
         buy += 10
     elif structure["structure"] == "BEARISH":
         sell += 10
-    # BOS
+    # BOS / CHoCH
     if bos_choch["bos"] == "BULLISH BOS":
         buy += 10
     elif bos_choch["bos"] == "BEARISH BOS":
         sell += 10
-    # CHoCH
     if bos_choch["choch"] == "BULLISH CHoCH":
         buy += 8
     elif bos_choch["choch"] == "BEARISH CHoCH":
         sell += 8
-    # Candle
+    # CANDLE
     if candle.startswith("BULLISH"):
         buy += 5
     elif candle.startswith("BEARISH"):
         sell += 5
-    # Liquidity
+    # LIQUIDITY
     if sweep == "BULLISH LIQUIDITY SWEEP":
         buy += 5
     elif sweep == "BEARISH LIQUIDITY SWEEP":
         sell += 5
-    # Breakout
+    # BREAKOUT
     if breakout == "BULLISH BREAKOUT":
         buy += 5
     elif breakout == "BEARISH BREAKOUT":
@@ -521,9 +499,50 @@ def calculate_score(
         "sell": sell
     }
 # =========================================================
-# SMART DECISION
+# NEXT TRIGGER
 # =========================================================
-def smart_decision(
+def get_next_trigger(
+    direction,
+    structure,
+    bos_choch
+):
+    if direction == "SELL":
+        if structure["structure"] == "BULLISH":
+            return (
+                "M30 bearish CHoCH + "
+                "break of HL + retest"
+            )
+        if (
+            bos_choch["choch"]
+            == "BEARISH CHoCH"
+        ):
+            return (
+                "Retest after bearish CHoCH"
+            )
+        return (
+            "Bearish BOS + retest"
+        )
+    if direction == "BUY":
+        if structure["structure"] == "BEARISH":
+            return (
+                "M30 bullish CHoCH + "
+                "break of LH + retest"
+            )
+        if (
+            bos_choch["choch"]
+            == "BULLISH CHoCH"
+        ):
+            return (
+                "Retest after bullish CHoCH"
+            )
+        return (
+            "Bullish BOS + retest"
+        )
+    return "Wait for confirmation"
+# =========================================================
+# DECISION
+# =========================================================
+def make_decision(
     score_result,
     h4,
     h1,
@@ -532,19 +551,13 @@ def smart_decision(
     structure,
     bos_choch,
     candle,
-    sweep,
-    breakout,
-    price,
     support,
     resistance
 ):
     direction = score_result["direction"]
     score = score_result["score"]
     reasons = []
-    # =====================================================
-    # HARD FILTERS
-    # =====================================================
-    # SELL against bullish structure
+    # STRUCTURE FILTER
     if (
         direction == "SELL"
         and structure["structure"] == "BULLISH"
@@ -553,8 +566,10 @@ def smart_decision(
         reasons.append(
             "Market structure bullish"
         )
-        return "WAIT", reasons
-    # BUY against bearish structure
+        return (
+            "WAIT",
+            reasons
+        )
     if (
         direction == "BUY"
         and structure["structure"] == "BEARISH"
@@ -563,52 +578,47 @@ def smart_decision(
         reasons.append(
             "Market structure bearish"
         )
-        return "WAIT", reasons
-    # RSI extreme
+        return (
+            "WAIT",
+            reasons
+        )
+    # RSI FILTER
     if direction == "SELL" and m30["rsi"] < 30:
         reasons.append(
             "RSI oversold"
         )
-        return "WAIT", reasons
+        return (
+            "WAIT",
+            reasons
+        )
     if direction == "BUY" and m30["rsi"] > 70:
         reasons.append(
             "RSI overbought"
         )
-        return "WAIT", reasons
-    # Location
-    if not location_filter(
-        price,
-        support,
-        resistance,
-        m30["atr"],
-        direction
-    ):
-        reasons.append(
-            "Price too close to key level"
+        return (
+            "WAIT",
+            reasons
         )
-        return "WAIT", reasons
-    # =====================================================
-    # SCORE FILTER
-    # =====================================================
+    # SCORE
     if score >= 85:
         signal = f"STRONG {direction}"
     elif score >= 70:
         signal = direction
     else:
         signal = "WATCH"
-    return signal, reasons
+    return (
+        signal,
+        reasons
+    )
 # =========================================================
-# ANALYSIS TEXT
+# ANALYSIS
 # =========================================================
 def create_analysis(
-    direction,
-    signal,
     structure,
     bos_choch,
     candle,
     sweep,
-    breakout,
-    m30
+    breakout
 ):
     reasons = []
     if structure["structure"] == "BULLISH":
@@ -639,13 +649,6 @@ def create_analysis(
         reasons.append(
             breakout.lower()
         )
-    if (
-        m30["rsi"] > 70
-        or m30["rsi"] < 30
-    ):
-        reasons.append(
-            "RSI extreme"
-        )
     if not reasons:
         return (
             "Belum ada konfirmasi kuat."
@@ -671,11 +674,6 @@ def send_telegram(message):
         timeout=20
     )
     response.raise_for_status()
-    result = response.json()
-    if not result.get("ok"):
-        raise Exception(
-            f"Telegram error: {result}"
-        )
     print(
         "✅ Telegram message sent!"
     )
@@ -684,24 +682,18 @@ def send_telegram(message):
 # =========================================================
 def main():
     print(
-        "===================================="
+        "================================"
     )
     print(
-        "🤖 XAUUSD AI-STYLE SCANNER V1.4"
+        "🤖 XAUUSD AI-STYLE V1.5"
     )
     print(
-        "===================================="
+        "================================"
     )
-    # TIMEFRAMES
-    print("Loading H4...")
     h4 = analyze_timeframe("4h")
-    print("Loading H1...")
     h1 = analyze_timeframe("1h")
-    print("Loading M30...")
     m30 = analyze_timeframe("30min")
-    print("Loading M15...")
     m15 = analyze_timeframe("15min")
-    # M30
     m30_df = get_data(
         "30min",
         250
@@ -722,12 +714,10 @@ def main():
     breakout = detect_breakout(
         m30_df
     )
-    support, resistance = (
-        get_support_resistance(
-            m30_df
-        )
+    support, resistance = smart_levels(
+        m30_df,
+        m30["atr"]
     )
-    # SCORE
     score_result = calculate_score(
         h4,
         h1,
@@ -737,32 +727,22 @@ def main():
         bos_choch,
         candle,
         sweep,
-        breakout,
-        m30["price"],
-        support,
-        resistance
+        breakout
     )
     direction = score_result["direction"]
     score = score_result["score"]
-    # SMART DECISION
-    signal, rejection_reasons = (
-        smart_decision(
-            score_result,
-            h4,
-            h1,
-            m30,
-            m15,
-            structure,
-            bos_choch,
-            candle,
-            sweep,
-            breakout,
-            m30["price"],
-            support,
-            resistance
-        )
+    signal, rejection_reasons = make_decision(
+        score_result,
+        h4,
+        h1,
+        m30,
+        m15,
+        structure,
+        bos_choch,
+        candle,
+        support,
+        resistance
     )
-    # TRADE PLAN
     entry = m30["price"]
     atr = m30["atr"]
     sl = None
@@ -782,20 +762,20 @@ def main():
                 1.5 * atr
             )
             tp1 = entry + (
-                1.5 * atr
+                2.25 * atr
             )
             tp2 = entry + (
-                3.0 * atr
+                3.75 * atr
             )
         else:
             sl = entry + (
                 1.5 * atr
             )
             tp1 = entry - (
-                1.5 * atr
+                2.25 * atr
             )
             tp2 = entry - (
-                3.0 * atr
+                3.75 * atr
             )
         risk = abs(
             entry - sl
@@ -806,25 +786,26 @@ def main():
         rr2 = abs(
             tp2 - entry
         ) / risk
-        # Final RR protection
-        if rr1 < 1.0:
+        if rr1 < 1.5:
             valid_trade = False
             signal = "WAIT"
             rejection_reasons.append(
-                "TP1 RR below 1:1"
+                "TP1 RR below 1:1.5"
             )
-    analysis = create_analysis(
+    next_trigger = get_next_trigger(
         direction,
-        signal,
+        structure,
+        bos_choch
+    )
+    analysis = create_analysis(
         structure,
         bos_choch,
         candle,
         sweep,
-        breakout,
-        m30
+        breakout
     )
     # =====================================================
-    # TELEGRAM MESSAGE
+    # MESSAGE
     # =====================================================
     if signal in [
         "BUY",
@@ -838,10 +819,10 @@ def main():
             else "🔴"
         )
         message = (
-            "🤖 XAUUSD AI-STYLE V1.4\n"
+            "🤖 XAUUSD AI-STYLE V1.5\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"{emoji} {signal}\n"
-            f"📊 Score : {score}/100\n\n"
+            f"📊 Confidence : {score}/100\n\n"
             "📈 MULTI-TIMEFRAME\n"
             f"H4  : {h4['trend']}\n"
             f"H1  : {h1['trend']}\n"
@@ -866,7 +847,7 @@ def main():
             f"EMA50 : {m30['ema50']:.2f}\n"
             f"RSI : {m30['rsi']:.2f}\n"
             f"ATR : {m30['atr']:.2f}\n\n"
-            "🧱 LEVELS\n"
+            "🧱 SMART LEVELS\n"
             f"Support : {support:.2f}\n"
             f"Resistance : {resistance:.2f}\n\n"
             "🎯 TRADE PLAN\n"
@@ -883,21 +864,19 @@ def main():
             "⚠️ Signal only — manage your risk."
         )
     else:
-        reason_text = (
-            "\n".join(
-                f"• {x}"
-                for x in rejection_reasons
-            )
+        reason_text = "\n".join(
+            f"• {x}"
+            for x in rejection_reasons
         )
         if not reason_text:
             reason_text = (
                 "• Konfirmasi belum cukup kuat"
             )
         message = (
-            "🤖 XAUUSD AI-STYLE V1.4\n"
+            "🤖 XAUUSD AI-STYLE V1.5\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"⚪ {signal}\n"
-            f"📊 Score : {score}/100\n\n"
+            f"📊 Confidence : {score}/100\n\n"
             "📈 MULTI-TIMEFRAME\n"
             f"H4  : {h4['trend']}\n"
             f"H1  : {h1['trend']}\n"
@@ -922,11 +901,13 @@ def main():
             f"EMA50 : {m30['ema50']:.2f}\n"
             f"RSI : {m30['rsi']:.2f}\n"
             f"ATR : {m30['atr']:.2f}\n\n"
-            "🧱 LEVELS\n"
+            "🧱 SMART LEVELS\n"
             f"Support : {support:.2f}\n"
             f"Resistance : {resistance:.2f}\n\n"
             "🛡 SMART FILTER\n"
             f"{reason_text}\n\n"
+            "🎯 NEXT TRIGGER\n"
+            f"➡️ {next_trigger}\n\n"
             "🤖 ANALYSIS\n"
             f"{analysis}\n\n"
             f"⏱ Candle : {m30['time']}\n\n"
@@ -935,13 +916,13 @@ def main():
     print(message)
     send_telegram(message)
     print(
-        "===================================="
+        "================================"
     )
     print(
-        "✅ V1.4 SCANNER FINISHED"
+        "✅ V1.5 FINISHED"
     )
     print(
-        "===================================="
+        "================================"
     )
 if __name__ == "__main__":
     main()
