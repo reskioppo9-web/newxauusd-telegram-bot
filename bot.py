@@ -2,15 +2,15 @@ import os
 import requests
 import pandas as pd
 # =========================================================
-# XAUUSD AI-STYLE SCANNER V1.3
-# MARKET STRUCTURE
+# XAUUSD AI-STYLE SCANNER V1.4
+# SMART FILTER + MARKET STRUCTURE
 # =========================================================
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 TWELVE_DATA_API_KEY = os.environ["TWELVE_DATA_API_KEY"]
 SYMBOL = "XAU/USD"
 # =========================================================
-# MARKET DATA
+# DATA
 # =========================================================
 def get_data(interval, outputsize=250):
     url = "https://api.twelvedata.com/time_series"
@@ -97,7 +97,7 @@ def add_indicators(df):
     df["atr"] = calculate_atr(df)
     return df
 # =========================================================
-# TIMEFRAME ANALYSIS
+# TIMEFRAME
 # =========================================================
 def analyze_timeframe(interval):
     df = get_data(
@@ -111,9 +111,15 @@ def analyze_timeframe(interval):
     ema50 = latest["ema50"]
     rsi = latest["rsi"]
     atr = latest["atr"]
-    if price > ema20 and ema20 > ema50:
+    if (
+        price > ema20
+        and ema20 > ema50
+    ):
         trend = "BULLISH"
-    elif price < ema20 and ema20 < ema50:
+    elif (
+        price < ema20
+        and ema20 < ema50
+    ):
         trend = "BEARISH"
     else:
         trend = "NEUTRAL"
@@ -127,7 +133,7 @@ def analyze_timeframe(interval):
         "time": latest["datetime"]
     }
 # =========================================================
-# SWING DETECTION
+# SWINGS
 # =========================================================
 def find_swings(df, lookback=2):
     closed = df.iloc[:-1].copy()
@@ -177,57 +183,50 @@ def find_swings(df, lookback=2):
 # =========================================================
 def detect_market_structure(df):
     highs, lows = find_swings(
-        df,
-        lookback=2
+        df
     )
-    structure = "NEUTRAL"
-    last_high_type = "NONE"
-    last_low_type = "NONE"
-    # -------------------------
-    # HIGH STRUCTURE
-    # -------------------------
+    high_type = "NONE"
+    low_type = "NONE"
     if len(highs) >= 2:
-        previous_high = highs[-2]["price"]
-        latest_high = highs[-1]["price"]
-        if latest_high > previous_high:
-            last_high_type = "HH"
+        if (
+            highs[-1]["price"]
+            > highs[-2]["price"]
+        ):
+            high_type = "HH"
         else:
-            last_high_type = "LH"
-    # -------------------------
-    # LOW STRUCTURE
-    # -------------------------
+            high_type = "LH"
     if len(lows) >= 2:
-        previous_low = lows[-2]["price"]
-        latest_low = lows[-1]["price"]
-        if latest_low > previous_low:
-            last_low_type = "HL"
+        if (
+            lows[-1]["price"]
+            > lows[-2]["price"]
+        ):
+            low_type = "HL"
         else:
-            last_low_type = "LL"
-    # -------------------------
-    # FINAL STRUCTURE
-    # -------------------------
+            low_type = "LL"
     if (
-        last_high_type == "HH"
-        and last_low_type == "HL"
+        high_type == "HH"
+        and low_type == "HL"
     ):
         structure = "BULLISH"
     elif (
-        last_high_type == "LH"
-        and last_low_type == "LL"
+        high_type == "LH"
+        and low_type == "LL"
     ):
         structure = "BEARISH"
-    elif last_high_type == "HH":
+    elif high_type == "HH":
         structure = "BULLISH"
-    elif last_low_type == "HL":
+    elif low_type == "HL":
         structure = "BULLISH"
-    elif last_high_type == "LH":
+    elif high_type == "LH":
         structure = "BEARISH"
-    elif last_low_type == "LL":
+    elif low_type == "LL":
         structure = "BEARISH"
+    else:
+        structure = "NEUTRAL"
     return {
         "structure": structure,
-        "high": last_high_type,
-        "low": last_low_type,
+        "high": high_type,
+        "low": low_type,
         "highs": highs,
         "lows": lows
     }
@@ -244,42 +243,26 @@ def detect_bos_choch(
     lows = structure["lows"]
     bos = "NONE"
     choch = "NONE"
-    if len(highs) >= 2:
-        previous_swing_high = (
-            highs[-2]["price"]
-        )
-        latest_swing_high = (
-            highs[-1]["price"]
-        )
-        if (
-            current["close"]
-            > latest_swing_high
-        ):
+    if len(highs) >= 1:
+        last_high = highs[-1]["price"]
+        if current["close"] > last_high:
             if structure["structure"] == "BULLISH":
                 bos = "BULLISH BOS"
-            else:
+            elif structure["structure"] == "BEARISH":
                 choch = "BULLISH CHoCH"
-    if len(lows) >= 2:
-        previous_swing_low = (
-            lows[-2]["price"]
-        )
-        latest_swing_low = (
-            lows[-1]["price"]
-        )
-        if (
-            current["close"]
-            < latest_swing_low
-        ):
+    if len(lows) >= 1:
+        last_low = lows[-1]["price"]
+        if current["close"] < last_low:
             if structure["structure"] == "BEARISH":
                 bos = "BEARISH BOS"
-            else:
+            elif structure["structure"] == "BULLISH":
                 choch = "BEARISH CHoCH"
     return {
         "bos": bos,
         "choch": choch
     }
 # =========================================================
-# CANDLE CONFIRMATION
+# CANDLE
 # =========================================================
 def candle_confirmation(df):
     closed = df.iloc[:-1].copy()
@@ -293,7 +276,7 @@ def candle_confirmation(df):
         current["high"]
         - current["low"]
     )
-    if candle_range == 0:
+    if candle_range <= 0:
         return "NONE"
     upper_wick = (
         current["high"]
@@ -311,45 +294,33 @@ def candle_confirmation(df):
     )
     bullish_engulfing = (
         current["close"] > current["open"]
-        and previous["close"]
-        < previous["open"]
-        and current["close"]
-        >= previous["open"]
-        and current["open"]
-        <= previous["close"]
+        and previous["close"] < previous["open"]
+        and current["close"] >= previous["open"]
+        and current["open"] <= previous["close"]
     )
     bearish_engulfing = (
         current["close"] < current["open"]
-        and previous["close"]
-        > previous["open"]
-        and current["close"]
-        <= previous["open"]
-        and current["open"]
-        >= previous["close"]
+        and previous["close"] > previous["open"]
+        and current["close"] <= previous["open"]
+        and current["open"] >= previous["close"]
     )
     bullish_pin = (
         lower_wick >= body * 2
         and lower_wick > upper_wick
-        and current["close"]
-        > current["open"]
+        and current["close"] > current["open"]
     )
     bearish_pin = (
         upper_wick >= body * 2
         and upper_wick > lower_wick
-        and current["close"]
-        < current["open"]
+        and current["close"] < current["open"]
     )
     strong_bullish = (
-        current["close"]
-        > current["open"]
-        and body
-        >= candle_range * 0.65
+        current["close"] > current["open"]
+        and body >= candle_range * 0.65
     )
     strong_bearish = (
-        current["close"]
-        < current["open"]
-        and body
-        >= candle_range * 0.65
+        current["close"] < current["open"]
+        and body >= candle_range * 0.65
     )
     if bullish_engulfing:
         return "BULLISH ENGULFING"
@@ -365,7 +336,7 @@ def candle_confirmation(df):
         return "BEARISH MOMENTUM"
     return "NONE"
 # =========================================================
-# LIQUIDITY SWEEP
+# LIQUIDITY
 # =========================================================
 def detect_liquidity_sweep(df):
     closed = df.iloc[:-1].copy()
@@ -373,19 +344,17 @@ def detect_liquidity_sweep(df):
     previous = closed.iloc[-6:-1]
     previous_high = previous["high"].max()
     previous_low = previous["low"].min()
-    bullish_sweep = (
+    bullish = (
         current["low"] < previous_low
-        and current["close"]
-        > previous_low
+        and current["close"] > previous_low
     )
-    bearish_sweep = (
+    bearish = (
         current["high"] > previous_high
-        and current["close"]
-        < previous_high
+        and current["close"] < previous_high
     )
-    if bullish_sweep:
+    if bullish:
         return "BULLISH LIQUIDITY SWEEP"
-    if bearish_sweep:
+    if bearish:
         return "BEARISH LIQUIDITY SWEEP"
     return "NONE"
 # =========================================================
@@ -393,17 +362,30 @@ def detect_liquidity_sweep(df):
 # =========================================================
 def get_support_resistance(df):
     closed = df.iloc[:-1].copy()
-    recent = closed.tail(80)
-    support = (
-        recent["low"]
-        .nsmallest(5)
-        .mean()
+    current_price = closed.iloc[-1]["close"]
+    recent = closed.tail(100)
+    supports = sorted(
+        recent["low"].unique()
     )
-    resistance = (
-        recent["high"]
-        .nlargest(5)
-        .mean()
+    resistances = sorted(
+        recent["high"].unique()
     )
+    below = [
+        x for x in supports
+        if x < current_price
+    ]
+    above = [
+        x for x in resistances
+        if x > current_price
+    ]
+    if below:
+        support = max(below)
+    else:
+        support = recent["low"].min()
+    if above:
+        resistance = min(above)
+    else:
+        resistance = recent["high"].max()
     return support, resistance
 # =========================================================
 # BREAKOUT
@@ -420,7 +402,34 @@ def detect_breakout(df):
         return "BEARISH BREAKOUT"
     return "NONE"
 # =========================================================
-# SCORING ENGINE V1.3
+# LOCATION FILTER
+# =========================================================
+def location_filter(
+    price,
+    support,
+    resistance,
+    atr,
+    direction
+):
+    if atr <= 0:
+        return True
+    distance_support = (
+        price - support
+    )
+    distance_resistance = (
+        resistance - price
+    )
+    # Jangan SELL terlalu dekat support
+    if direction == "SELL":
+        if distance_support <= atr * 1.5:
+            return False
+    # Jangan BUY terlalu dekat resistance
+    if direction == "BUY":
+        if distance_resistance <= atr * 1.5:
+            return False
+    return True
+# =========================================================
+# SCORE
 # =========================================================
 def calculate_score(
     h4,
@@ -431,182 +440,218 @@ def calculate_score(
     bos_choch,
     candle,
     sweep,
-    breakout
+    breakout,
+    price,
+    support,
+    resistance
 ):
-    buy_score = 0
-    sell_score = 0
-    # -------------------------
-    # H4 = 15
-    # -------------------------
+    buy = 0
+    sell = 0
+    # H4
     if h4["trend"] == "BULLISH":
-        buy_score += 15
+        buy += 15
     elif h4["trend"] == "BEARISH":
-        sell_score += 15
-    # -------------------------
-    # H1 = 20
-    # -------------------------
+        sell += 15
+    # H1
     if h1["trend"] == "BULLISH":
-        buy_score += 20
+        buy += 20
     elif h1["trend"] == "BEARISH":
-        sell_score += 20
-    # -------------------------
-    # M30 = 15
-    # -------------------------
+        sell += 20
+    # M30
     if m30["trend"] == "BULLISH":
-        buy_score += 15
+        buy += 15
     elif m30["trend"] == "BEARISH":
-        sell_score += 15
-    # -------------------------
-    # M15 = 10
-    # -------------------------
+        sell += 15
+    # M15
     if m15["trend"] == "BULLISH":
-        buy_score += 10
+        buy += 10
     elif m15["trend"] == "BEARISH":
-        sell_score += 10
-    # -------------------------
-    # RSI = 10
-    # -------------------------
-    if m30["rsi"] > 50:
-        buy_score += 10
-    elif m30["rsi"] < 50:
-        sell_score += 10
-    # -------------------------
-    # MARKET STRUCTURE = 10
-    # -------------------------
+        sell += 10
+    # RSI
+    if (
+        m30["rsi"] > 50
+        and m30["rsi"] < 70
+    ):
+        buy += 10
+    elif (
+        m30["rsi"] < 50
+        and m30["rsi"] > 30
+    ):
+        sell += 10
+    # Structure
     if structure["structure"] == "BULLISH":
-        buy_score += 10
+        buy += 10
     elif structure["structure"] == "BEARISH":
-        sell_score += 10
-    # -------------------------
-    # BOS / CHoCH = 5
-    # -------------------------
+        sell += 10
+    # BOS
     if bos_choch["bos"] == "BULLISH BOS":
-        buy_score += 5
+        buy += 10
     elif bos_choch["bos"] == "BEARISH BOS":
-        sell_score += 5
+        sell += 10
+    # CHoCH
     if bos_choch["choch"] == "BULLISH CHoCH":
-        buy_score += 5
+        buy += 8
     elif bos_choch["choch"] == "BEARISH CHoCH":
-        sell_score += 5
-    # -------------------------
-    # CANDLE = 5
-    # -------------------------
+        sell += 8
+    # Candle
     if candle.startswith("BULLISH"):
-        buy_score += 5
+        buy += 5
     elif candle.startswith("BEARISH"):
-        sell_score += 5
-    # -------------------------
-    # LIQUIDITY = 5
-    # -------------------------
+        sell += 5
+    # Liquidity
     if sweep == "BULLISH LIQUIDITY SWEEP":
-        buy_score += 5
+        buy += 5
     elif sweep == "BEARISH LIQUIDITY SWEEP":
-        sell_score += 5
-    # -------------------------
-    # BREAKOUT = 5
-    # -------------------------
+        sell += 5
+    # Breakout
     if breakout == "BULLISH BREAKOUT":
-        buy_score += 5
+        buy += 5
     elif breakout == "BEARISH BREAKOUT":
-        sell_score += 5
-    # -------------------------
-    # FINAL
-    # -------------------------
-    if buy_score >= sell_score:
+        sell += 5
+    if buy >= sell:
         direction = "BUY"
-        score = buy_score
+        score = buy
     else:
         direction = "SELL"
-        score = sell_score
-    score = min(
-        score,
-        100
-    )
-    if score >= 85:
-        signal = f"STRONG {direction}"
-    elif score >= 70:
-        signal = direction
-    elif score >= 55:
-        signal = "WATCH"
-    else:
-        signal = "WAIT"
+        score = sell
     return {
         "direction": direction,
-        "score": score,
-        "signal": signal,
-        "buy_score": buy_score,
-        "sell_score": sell_score
+        "score": min(score, 100),
+        "buy": buy,
+        "sell": sell
     }
 # =========================================================
-# ANALYSIS
+# SMART DECISION
 # =========================================================
-def create_analysis(
-    direction,
+def smart_decision(
+    score_result,
+    h4,
+    h1,
+    m30,
+    m15,
     structure,
     bos_choch,
     candle,
     sweep,
-    breakout
+    breakout,
+    price,
+    support,
+    resistance
+):
+    direction = score_result["direction"]
+    score = score_result["score"]
+    reasons = []
+    # =====================================================
+    # HARD FILTERS
+    # =====================================================
+    # SELL against bullish structure
+    if (
+        direction == "SELL"
+        and structure["structure"] == "BULLISH"
+        and bos_choch["choch"] != "BEARISH CHoCH"
+    ):
+        reasons.append(
+            "Market structure bullish"
+        )
+        return "WAIT", reasons
+    # BUY against bearish structure
+    if (
+        direction == "BUY"
+        and structure["structure"] == "BEARISH"
+        and bos_choch["choch"] != "BULLISH CHoCH"
+    ):
+        reasons.append(
+            "Market structure bearish"
+        )
+        return "WAIT", reasons
+    # RSI extreme
+    if direction == "SELL" and m30["rsi"] < 30:
+        reasons.append(
+            "RSI oversold"
+        )
+        return "WAIT", reasons
+    if direction == "BUY" and m30["rsi"] > 70:
+        reasons.append(
+            "RSI overbought"
+        )
+        return "WAIT", reasons
+    # Location
+    if not location_filter(
+        price,
+        support,
+        resistance,
+        m30["atr"],
+        direction
+    ):
+        reasons.append(
+            "Price too close to key level"
+        )
+        return "WAIT", reasons
+    # =====================================================
+    # SCORE FILTER
+    # =====================================================
+    if score >= 85:
+        signal = f"STRONG {direction}"
+    elif score >= 70:
+        signal = direction
+    else:
+        signal = "WATCH"
+    return signal, reasons
+# =========================================================
+# ANALYSIS TEXT
+# =========================================================
+def create_analysis(
+    direction,
+    signal,
+    structure,
+    bos_choch,
+    candle,
+    sweep,
+    breakout,
+    m30
 ):
     reasons = []
-    if direction == "BUY":
-        if structure["structure"] == "BULLISH":
-            reasons.append(
-                "bullish market structure"
-            )
-        if bos_choch["bos"] == "BULLISH BOS":
-            reasons.append(
-                "bullish BOS"
-            )
-        if bos_choch["choch"] == "BULLISH CHoCH":
-            reasons.append(
-                "bullish CHoCH"
-            )
-        if candle.startswith("BULLISH"):
-            reasons.append(
-                candle.lower()
-            )
-        if sweep == "BULLISH LIQUIDITY SWEEP":
-            reasons.append(
-                "bullish liquidity sweep"
-            )
-        if breakout == "BULLISH BREAKOUT":
-            reasons.append(
-                "bullish breakout"
-            )
-    else:
-        if structure["structure"] == "BEARISH":
-            reasons.append(
-                "bearish market structure"
-            )
-        if bos_choch["bos"] == "BEARISH BOS":
-            reasons.append(
-                "bearish BOS"
-            )
-        if bos_choch["choch"] == "BEARISH CHoCH":
-            reasons.append(
-                "bearish CHoCH"
-            )
-        if candle.startswith("BEARISH"):
-            reasons.append(
-                candle.lower()
-            )
-        if sweep == "BEARISH LIQUIDITY SWEEP":
-            reasons.append(
-                "bearish liquidity sweep"
-            )
-        if breakout == "BEARISH BREAKOUT":
-            reasons.append(
-                "bearish breakout"
-            )
+    if structure["structure"] == "BULLISH":
+        reasons.append(
+            "bullish market structure"
+        )
+    elif structure["structure"] == "BEARISH":
+        reasons.append(
+            "bearish market structure"
+        )
+    if bos_choch["bos"] != "NONE":
+        reasons.append(
+            bos_choch["bos"]
+        )
+    if bos_choch["choch"] != "NONE":
+        reasons.append(
+            bos_choch["choch"]
+        )
+    if candle != "NONE":
+        reasons.append(
+            candle.lower()
+        )
+    if sweep != "NONE":
+        reasons.append(
+            sweep.lower()
+        )
+    if breakout != "NONE":
+        reasons.append(
+            breakout.lower()
+        )
+    if (
+        m30["rsi"] > 70
+        or m30["rsi"] < 30
+    ):
+        reasons.append(
+            "RSI extreme"
+        )
     if not reasons:
         return (
-            "Belum terdapat "
-            "konfirmasi price action yang kuat."
+            "Belum ada konfirmasi kuat."
         )
     return (
-        "Konfirmasi utama: "
-        + ", ".join(reasons)
+        " | ".join(reasons)
         + "."
     )
 # =========================================================
@@ -625,14 +670,6 @@ def send_telegram(message):
         },
         timeout=20
     )
-    print(
-        f"Telegram status: "
-        f"{response.status_code}"
-    )
-    print(
-        f"Telegram response: "
-        f"{response.text}"
-    )
     response.raise_for_status()
     result = response.json()
     if not result.get("ok"):
@@ -650,14 +687,12 @@ def main():
         "===================================="
     )
     print(
-        "🤖 XAUUSD AI-STYLE SCANNER V1.3"
+        "🤖 XAUUSD AI-STYLE SCANNER V1.4"
     )
     print(
         "===================================="
     )
-    # -------------------------
     # TIMEFRAMES
-    # -------------------------
     print("Loading H4...")
     h4 = analyze_timeframe("4h")
     print("Loading H1...")
@@ -666,16 +701,11 @@ def main():
     m30 = analyze_timeframe("30min")
     print("Loading M15...")
     m15 = analyze_timeframe("15min")
-    # -------------------------
-    # M30 DATA
-    # -------------------------
+    # M30
     m30_df = get_data(
         "30min",
         250
     )
-    # -------------------------
-    # STRUCTURE
-    # -------------------------
     structure = detect_market_structure(
         m30_df
     )
@@ -683,9 +713,6 @@ def main():
         m30_df,
         structure
     )
-    # -------------------------
-    # OTHER PRICE ACTION
-    # -------------------------
     candle = candle_confirmation(
         m30_df
     )
@@ -700,9 +727,7 @@ def main():
             m30_df
         )
     )
-    # -------------------------
     # SCORE
-    # -------------------------
     score_result = calculate_score(
         h4,
         h1,
@@ -712,49 +737,66 @@ def main():
         bos_choch,
         candle,
         sweep,
-        breakout
+        breakout,
+        m30["price"],
+        support,
+        resistance
     )
-    signal = score_result["signal"]
-    score = score_result["score"]
     direction = score_result["direction"]
-    # -------------------------
+    score = score_result["score"]
+    # SMART DECISION
+    signal, rejection_reasons = (
+        smart_decision(
+            score_result,
+            h4,
+            h1,
+            m30,
+            m15,
+            structure,
+            bos_choch,
+            candle,
+            sweep,
+            breakout,
+            m30["price"],
+            support,
+            resistance
+        )
+    )
     # TRADE PLAN
-    # -------------------------
     entry = m30["price"]
     atr = m30["atr"]
     sl = None
     tp1 = None
     tp2 = None
-    if signal in [
+    rr1 = None
+    rr2 = None
+    valid_trade = signal in [
         "BUY",
         "SELL",
         "STRONG BUY",
         "STRONG SELL"
-    ]:
+    ]
+    if valid_trade:
         if direction == "BUY":
             sl = entry - (
                 1.5 * atr
             )
             tp1 = entry + (
-                1.0 * atr
+                1.5 * atr
             )
             tp2 = entry + (
-                2.0 * atr
+                3.0 * atr
             )
         else:
             sl = entry + (
                 1.5 * atr
             )
             tp1 = entry - (
-                1.0 * atr
+                1.5 * atr
             )
             tp2 = entry - (
-                2.0 * atr
+                3.0 * atr
             )
-    # -------------------------
-    # RR
-    # -------------------------
-    if sl is not None:
         risk = abs(
             entry - sl
         )
@@ -764,22 +806,25 @@ def main():
         rr2 = abs(
             tp2 - entry
         ) / risk
-    else:
-        rr1 = None
-        rr2 = None
-    # -------------------------
-    # ANALYSIS
-    # -------------------------
+        # Final RR protection
+        if rr1 < 1.0:
+            valid_trade = False
+            signal = "WAIT"
+            rejection_reasons.append(
+                "TP1 RR below 1:1"
+            )
     analysis = create_analysis(
         direction,
+        signal,
         structure,
         bos_choch,
         candle,
         sweep,
-        breakout
+        breakout,
+        m30
     )
     # =====================================================
-    # MESSAGE
+    # TELEGRAM MESSAGE
     # =====================================================
     if signal in [
         "BUY",
@@ -793,7 +838,7 @@ def main():
             else "🔴"
         )
         message = (
-            "🤖 XAUUSD AI-STYLE V1.3\n"
+            "🤖 XAUUSD AI-STYLE V1.4\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"{emoji} {signal}\n"
             f"📊 Score : {score}/100\n\n"
@@ -834,12 +879,22 @@ def main():
             f"TP2 : 1:{rr2:.2f}\n\n"
             "🤖 ANALYSIS\n"
             f"{analysis}\n\n"
-            f"⏱ M30 Candle : {m30['time']}\n\n"
+            f"⏱ Candle : {m30['time']}\n\n"
             "⚠️ Signal only — manage your risk."
         )
     else:
+        reason_text = (
+            "\n".join(
+                f"• {x}"
+                for x in rejection_reasons
+            )
+        )
+        if not reason_text:
+            reason_text = (
+                "• Konfirmasi belum cukup kuat"
+            )
         message = (
-            "🤖 XAUUSD AI-STYLE V1.3\n"
+            "🤖 XAUUSD AI-STYLE V1.4\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"⚪ {signal}\n"
             f"📊 Score : {score}/100\n\n"
@@ -870,10 +925,12 @@ def main():
             "🧱 LEVELS\n"
             f"Support : {support:.2f}\n"
             f"Resistance : {resistance:.2f}\n\n"
+            "🛡 SMART FILTER\n"
+            f"{reason_text}\n\n"
             "🤖 ANALYSIS\n"
             f"{analysis}\n\n"
-            f"⏱ M30 Candle : {m30['time']}\n\n"
-            "⏳ Menunggu konfirmasi price action."
+            f"⏱ Candle : {m30['time']}\n\n"
+            "⏳ Menunggu setup berkualitas."
         )
     print(message)
     send_telegram(message)
@@ -881,7 +938,7 @@ def main():
         "===================================="
     )
     print(
-        "✅ SCANNER FINISHED"
+        "✅ V1.4 SCANNER FINISHED"
     )
     print(
         "===================================="
