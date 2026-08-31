@@ -2,8 +2,8 @@ import os
 import requests
 import pandas as pd
 # =========================================================
-# XAUUSD AI-STYLE V1.5
-# SMART S/R + ENTRY QUALITY
+# XAUUSD AI-STYLE V1.6
+# MARKET STRUCTURE ENGINE + DYNAMIC TRIGGER
 # =========================================================
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -97,7 +97,7 @@ def add_indicators(df):
     df["atr"] = calculate_atr(df)
     return df
 # =========================================================
-# TIMEFRAME
+# TIMEFRAME TREND
 # =========================================================
 def analyze_timeframe(interval):
     df = get_data(
@@ -182,7 +182,7 @@ def find_swings(
             )
     return highs, lows
 # =========================================================
-# MARKET STRUCTURE
+# MARKET STRUCTURE V1.6
 # =========================================================
 def detect_market_structure(df):
     highs, lows = find_swings(
@@ -191,21 +191,24 @@ def detect_market_structure(df):
     high_type = "NONE"
     low_type = "NONE"
     if len(highs) >= 2:
-        if (
-            highs[-1]["price"]
-            > highs[-2]["price"]
-        ):
+        previous_high = highs[-2]["price"]
+        latest_high = highs[-1]["price"]
+        if latest_high > previous_high:
             high_type = "HH"
-        else:
+        elif latest_high < previous_high:
             high_type = "LH"
     if len(lows) >= 2:
-        if (
-            lows[-1]["price"]
-            > lows[-2]["price"]
-        ):
+        previous_low = lows[-2]["price"]
+        latest_low = lows[-1]["price"]
+        if latest_low > previous_low:
             low_type = "HL"
-        else:
+        elif latest_low < previous_low:
             low_type = "LL"
+    # IMPORTANT:
+    # HH + HL = bullish
+    # LH + LL = bearish
+    # HH + LL = mixed
+    # LH + HL = mixed
     if (
         high_type == "HH"
         and low_type == "HL"
@@ -216,9 +219,18 @@ def detect_market_structure(df):
         and low_type == "LL"
     ):
         structure = "BEARISH"
-    elif high_type in ["HH", "HL"]:
+    elif (
+        high_type != "NONE"
+        and low_type != "NONE"
+    ):
+        structure = "MIXED"
+    elif high_type == "HH":
         structure = "BULLISH"
-    elif low_type in ["LL", "LH"]:
+    elif low_type == "HL":
+        structure = "BULLISH"
+    elif high_type == "LH":
+        structure = "BEARISH"
+    elif low_type == "LL":
         structure = "BEARISH"
     else:
         structure = "NEUTRAL"
@@ -247,14 +259,20 @@ def detect_bos_choch(
         if current["close"] > last_high:
             if structure["structure"] == "BULLISH":
                 bos = "BULLISH BOS"
-            elif structure["structure"] == "BEARISH":
+            elif structure["structure"] in [
+                "BEARISH",
+                "MIXED"
+            ]:
                 choch = "BULLISH CHoCH"
     if len(lows) >= 1:
         last_low = lows[-1]["price"]
         if current["close"] < last_low:
             if structure["structure"] == "BEARISH":
                 bos = "BEARISH BOS"
-            elif structure["structure"] == "BULLISH":
+            elif structure["structure"] in [
+                "BULLISH",
+                "MIXED"
+            ]:
                 choch = "BEARISH CHoCH"
     return {
         "bos": bos,
@@ -429,19 +447,22 @@ def calculate_score(
 ):
     buy = 0
     sell = 0
-    # TREND
+    # H4
     if h4["trend"] == "BULLISH":
         buy += 15
     elif h4["trend"] == "BEARISH":
         sell += 15
+    # H1
     if h1["trend"] == "BULLISH":
         buy += 20
     elif h1["trend"] == "BEARISH":
         sell += 20
+    # M30
     if m30["trend"] == "BULLISH":
         buy += 15
     elif m30["trend"] == "BEARISH":
         sell += 15
+    # M15
     if m15["trend"] == "BULLISH":
         buy += 10
     elif m15["trend"] == "BEARISH":
@@ -462,11 +483,12 @@ def calculate_score(
         buy += 10
     elif structure["structure"] == "BEARISH":
         sell += 10
-    # BOS / CHoCH
+    # BOS
     if bos_choch["bos"] == "BULLISH BOS":
         buy += 10
     elif bos_choch["bos"] == "BEARISH BOS":
         sell += 10
+    # CHoCH
     if bos_choch["choch"] == "BULLISH CHoCH":
         buy += 8
     elif bos_choch["choch"] == "BEARISH CHoCH":
@@ -486,12 +508,18 @@ def calculate_score(
         buy += 5
     elif breakout == "BEARISH BREAKOUT":
         sell += 5
-    if buy >= sell:
+    if buy > sell:
         direction = "BUY"
         score = buy
-    else:
+    elif sell > buy:
         direction = "SELL"
         score = sell
+    else:
+        direction = "NEUTRAL"
+        score = max(
+            buy,
+            sell
+        )
     return {
         "direction": direction,
         "score": min(score, 100),
@@ -499,115 +527,123 @@ def calculate_score(
         "sell": sell
     }
 # =========================================================
-# NEXT TRIGGER
+# DYNAMIC NEXT TRIGGER
 # =========================================================
 def get_next_trigger(
-    direction,
     structure,
     bos_choch
 ):
-    if direction == "SELL":
-        if structure["structure"] == "BULLISH":
-            return (
-                "M30 bearish CHoCH + "
-                "break of HL + retest"
-            )
-        if (
-            bos_choch["choch"]
-            == "BEARISH CHoCH"
-        ):
-            return (
-                "Retest after bearish CHoCH"
-            )
+    if bos_choch["choch"] == "BULLISH CHoCH":
         return (
-            "Bearish BOS + retest"
+            "🟢 BUY: bullish CHoCH "
+            "+ break HH + retest"
         )
-    if direction == "BUY":
-        if structure["structure"] == "BEARISH":
-            return (
-                "M30 bullish CHoCH + "
-                "break of LH + retest"
-            )
-        if (
-            bos_choch["choch"]
-            == "BULLISH CHoCH"
-        ):
-            return (
-                "Retest after bullish CHoCH"
-            )
+    if bos_choch["choch"] == "BEARISH CHoCH":
         return (
-            "Bullish BOS + retest"
+            "🔴 SELL: bearish CHoCH "
+            "+ break LL + retest"
         )
-    return "Wait for confirmation"
+    if structure["structure"] == "BULLISH":
+        return (
+            "🔴 SELL: bearish CHoCH "
+            "+ break HL + retest"
+        )
+    if structure["structure"] == "BEARISH":
+        return (
+            "🟢 BUY: bullish CHoCH "
+            "+ break LH + retest"
+        )
+    if structure["structure"] == "MIXED":
+        return (
+            "🟢 BUY: bullish CHoCH "
+            "+ break HH + retest\n"
+            "🔴 SELL: bearish CHoCH "
+            "+ break LL + retest"
+        )
+    return (
+        "Wait for clear BOS / CHoCH"
+    )
 # =========================================================
-# DECISION
+# DECISION FILTER
 # =========================================================
 def make_decision(
     score_result,
-    h4,
-    h1,
     m30,
-    m15,
     structure,
-    bos_choch,
-    candle,
-    support,
-    resistance
+    bos_choch
 ):
     direction = score_result["direction"]
     score = score_result["score"]
     reasons = []
-    # STRUCTURE FILTER
-    if (
-        direction == "SELL"
-        and structure["structure"] == "BULLISH"
-        and bos_choch["choch"] != "BEARISH CHoCH"
-    ):
+    # MIXED STRUCTURE
+    if structure["structure"] == "MIXED":
         reasons.append(
-            "Market structure bullish"
+            "Market structure mixed"
         )
         return (
             "WAIT",
             reasons
         )
-    if (
-        direction == "BUY"
-        and structure["structure"] == "BEARISH"
-        and bos_choch["choch"] != "BULLISH CHoCH"
-    ):
+    # BUY
+    if direction == "BUY":
+        if (
+            structure["structure"] == "BEARISH"
+            and bos_choch["choch"]
+            != "BULLISH CHoCH"
+        ):
+            reasons.append(
+                "Market structure bearish"
+            )
+            return (
+                "WAIT",
+                reasons
+            )
+        if m30["rsi"] > 70:
+            reasons.append(
+                "RSI overbought"
+            )
+            return (
+                "WAIT",
+                reasons
+            )
+    # SELL
+    if direction == "SELL":
+        if (
+            structure["structure"] == "BULLISH"
+            and bos_choch["choch"]
+            != "BEARISH CHoCH"
+        ):
+            reasons.append(
+                "Market structure bullish"
+            )
+            return (
+                "WAIT",
+                reasons
+            )
+        if m30["rsi"] < 30:
+            reasons.append(
+                "RSI oversold"
+            )
+            return (
+                "WAIT",
+                reasons
+            )
+    # SCORE FILTER
+    if score < 70:
         reasons.append(
-            "Market structure bearish"
+            "Confidence below 70"
         )
         return (
             "WAIT",
             reasons
         )
-    # RSI FILTER
-    if direction == "SELL" and m30["rsi"] < 30:
-        reasons.append(
-            "RSI oversold"
-        )
-        return (
-            "WAIT",
-            reasons
-        )
-    if direction == "BUY" and m30["rsi"] > 70:
-        reasons.append(
-            "RSI overbought"
-        )
-        return (
-            "WAIT",
-            reasons
-        )
-    # SCORE
     if score >= 85:
-        signal = f"STRONG {direction}"
-    elif score >= 70:
-        signal = direction
-    else:
-        signal = "WATCH"
+        return (
+            f"STRONG {direction}",
+            reasons
+        )
     return (
-        signal,
+        direction,
         reasons
     )
 # =========================================================
@@ -628,6 +664,10 @@ def create_analysis(
     elif structure["structure"] == "BEARISH":
         reasons.append(
             "bearish market structure"
+        )
+    elif structure["structure"] == "MIXED":
+        reasons.append(
+            "mixed market structure"
         )
     if bos_choch["bos"] != "NONE":
         reasons.append(
@@ -685,7 +725,7 @@ def main():
         "================================"
     )
     print(
-        "🤖 XAUUSD AI-STYLE V1.5"
+        "🤖 XAUUSD AI-STYLE V1.6"
     )
     print(
         "================================"
@@ -729,20 +769,14 @@ def main():
         sweep,
         breakout
     )
-    direction = score_result["direction"]
-    score = score_result["score"]
     signal, rejection_reasons = make_decision(
         score_result,
-        h4,
-        h1,
         m30,
-        m15,
         structure,
-        bos_choch,
-        candle,
-        support,
-        resistance
+        bos_choch
     )
+    direction = score_result["direction"]
+    score = score_result["score"]
     entry = m30["price"]
     atr = m30["atr"]
     sl = None
@@ -767,7 +801,7 @@ def main():
             tp2 = entry + (
                 3.75 * atr
             )
-        else:
+        elif direction == "SELL":
             sl = entry + (
                 1.5 * atr
             )
@@ -793,7 +827,6 @@ def main():
                 "TP1 RR below 1:1.5"
             )
     next_trigger = get_next_trigger(
-        direction,
         structure,
         bos_choch
     )
@@ -819,7 +852,7 @@ def main():
             else "🔴"
         )
         message = (
-            "🤖 XAUUSD AI-STYLE V1.5\n"
+            "🤖 XAUUSD AI-STYLE V1.6\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"{emoji} {signal}\n"
             f"📊 Confidence : {score}/100\n\n"
@@ -873,7 +906,7 @@ def main():
                 "• Konfirmasi belum cukup kuat"
             )
         message = (
-            "🤖 XAUUSD AI-STYLE V1.5\n"
+            "🤖 XAUUSD AI-STYLE V1.6\n"
             "━━━━━━━━━━━━━━━━━━\n\n"
             f"⚪ {signal}\n"
             f"📊 Confidence : {score}/100\n\n"
@@ -919,7 +952,7 @@ def main():
         "================================"
     )
     print(
-        "✅ V1.5 FINISHED"
+        "✅ V1.6 FINISHED"
     )
     print(
         "================================"
