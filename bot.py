@@ -4,8 +4,8 @@ import pandas as pd
 import numpy as np
 
 # ============================================================
-# XAUUSD AI-STYLE V1.6.5
-# MARKET STRUCTURE + MTF + DUAL TRIGGER ENGINE
+# XAUUSD AI-STYLE V1.6.6
+# CONFIDENCE + TRIGGER INTELLIGENCE ENGINE
 # ============================================================
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
@@ -23,12 +23,15 @@ BASE_URL = "https://api.twelvedata.com/time_series"
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
+    response = requests.post(
+        url,
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message
+        },
+        timeout=20
+    )
 
-    response = requests.post(url, json=payload, timeout=20)
     response.raise_for_status()
 
 
@@ -46,7 +49,12 @@ def get_data(interval, outputsize=250):
         "format": "JSON"
     }
 
-    response = requests.get(BASE_URL, params=params, timeout=20)
+    response = requests.get(
+        BASE_URL,
+        params=params,
+        timeout=20
+    )
+
     response.raise_for_status()
 
     data = response.json()
@@ -59,9 +67,16 @@ def get_data(interval, outputsize=250):
     df["datetime"] = pd.to_datetime(df["datetime"])
 
     for col in ["open", "high", "low", "close"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
 
-    df = df.sort_values("datetime").reset_index(drop=True)
+    df = (
+        df
+        .sort_values("datetime")
+        .reset_index(drop=True)
+    )
 
     return df
 
@@ -97,15 +112,26 @@ def add_indicators(df):
         adjust=False
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
+    )
 
-    df["rsi"] = 100 - (100 / (1 + rs))
+    df["rsi"] = 100 - (
+        100 / (1 + rs)
+    )
 
-    prev_close = df["close"].shift(1)
+    previous_close = df["close"].shift(1)
 
     tr1 = df["high"] - df["low"]
-    tr2 = (df["high"] - prev_close).abs()
-    tr3 = (df["low"] - prev_close).abs()
+
+    tr2 = (
+        df["high"] - previous_close
+    ).abs()
+
+    tr3 = (
+        df["low"] - previous_close
+    ).abs()
 
     tr = pd.concat(
         [tr1, tr2, tr3],
@@ -121,7 +147,7 @@ def add_indicators(df):
 
 
 # ============================================================
-# TIMEFRAME ANALYSIS
+# TIMEFRAME
 # ============================================================
 
 def analyze_timeframe(df):
@@ -133,15 +159,12 @@ def analyze_timeframe(df):
     ema50 = row["ema50"]
 
     if price > ema20 > ema50:
-        direction = "BULLISH"
+        return "BULLISH"
 
-    elif price < ema20 < ema50:
-        direction = "BEARISH"
+    if price < ema20 < ema50:
+        return "BEARISH"
 
-    else:
-        direction = "NEUTRAL"
-
-    return direction
+    return "NEUTRAL"
 
 
 # ============================================================
@@ -155,7 +178,10 @@ def find_swings(df, lookback=3):
 
     end = len(df) - 1
 
-    for i in range(lookback, end - lookback):
+    for i in range(
+        lookback,
+        end - lookback
+    ):
 
         high = df["high"].iloc[i]
         low = df["low"].iloc[i]
@@ -176,10 +202,16 @@ def find_swings(df, lookback=3):
             i + 1:i + 1 + lookback
         ].min()
 
-        if high > left_high and high > right_high:
+        if (
+            high > left_high
+            and high > right_high
+        ):
             highs.append((i, high))
 
-        if low < left_low and low < right_low:
+        if (
+            low < left_low
+            and low < right_low
+        ):
             lows.append((i, low))
 
     return highs, lows
@@ -203,26 +235,34 @@ def detect_market_structure(df):
             "last_low": None
         }
 
-    prev_high = highs[-2][1]
+    previous_high = highs[-2][1]
     last_high = highs[-1][1]
 
-    prev_low = lows[-2][1]
+    previous_low = lows[-2][1]
     last_low = lows[-1][1]
 
-    if last_high > prev_high:
-        high_label = "HH"
-    else:
-        high_label = "LH"
+    high_label = (
+        "HH"
+        if last_high > previous_high
+        else "LH"
+    )
 
-    if last_low > prev_low:
-        low_label = "HL"
-    else:
-        low_label = "LL"
+    low_label = (
+        "HL"
+        if last_low > previous_low
+        else "LL"
+    )
 
-    if high_label == "HH" and low_label == "HL":
+    if (
+        high_label == "HH"
+        and low_label == "HL"
+    ):
         structure = "BULLISH"
 
-    elif high_label == "LH" and low_label == "LL":
+    elif (
+        high_label == "LH"
+        and low_label == "LL"
+    ):
         structure = "BEARISH"
 
     else:
@@ -253,14 +293,20 @@ def detect_bos_choch(df, structure):
     bos = "NONE"
     choch = "NONE"
 
-    if last_high is not None and close > last_high:
+    if (
+        last_high is not None
+        and close > last_high
+    ):
 
         if structure["structure"] == "BULLISH":
             bos = "BULLISH BOS"
         else:
             choch = "BULLISH CHoCH"
 
-    elif last_low is not None and close < last_low:
+    elif (
+        last_low is not None
+        and close < last_low
+    ):
 
         if structure["structure"] == "BEARISH":
             bos = "BEARISH BOS"
@@ -271,7 +317,7 @@ def detect_bos_choch(df, structure):
 
 
 # ============================================================
-# CANDLE CONFIRMATION
+# CANDLE
 # ============================================================
 
 def candle_confirmation(df):
@@ -290,7 +336,7 @@ def candle_confirmation(df):
     body = abs(c - o)
     candle_range = h - l
 
-    if candle_range == 0:
+    if candle_range <= 0:
         return "NONE"
 
     body_ratio = body / candle_range
@@ -309,8 +355,13 @@ def candle_confirmation(df):
         and o > pc
     )
 
-    upper_wick = h - max(o, c)
-    lower_wick = min(o, c) - l
+    upper_wick = (
+        h - max(o, c)
+    )
+
+    lower_wick = (
+        min(o, c) - l
+    )
 
     bullish_rejection = (
         lower_wick > body * 1.5
@@ -346,7 +397,7 @@ def candle_confirmation(df):
 
 
 # ============================================================
-# LIQUIDITY SWEEP
+# LIQUIDITY
 # ============================================================
 
 def detect_liquidity_sweep(df):
@@ -358,20 +409,20 @@ def detect_liquidity_sweep(df):
     prior_high = previous["high"].max()
     prior_low = previous["low"].min()
 
-    bullish_sweep = (
+    bullish = (
         row["low"] < prior_low
         and row["close"] > prior_low
     )
 
-    bearish_sweep = (
+    bearish = (
         row["high"] > prior_high
         and row["close"] < prior_high
     )
 
-    if bullish_sweep:
+    if bullish:
         return "BULLISH LIQUIDITY SWEEP"
 
-    if bearish_sweep:
+    if bearish:
         return "BEARISH LIQUIDITY SWEEP"
 
     return "NONE"
@@ -384,6 +435,7 @@ def detect_liquidity_sweep(df):
 def detect_breakout(df):
 
     row = df.iloc[-2]
+
     previous = df.iloc[-7:-2]
 
     previous_high = previous["high"].max()
@@ -402,17 +454,23 @@ def detect_breakout(df):
 # PULLBACK
 # ============================================================
 
-def detect_pullback(df, structure, atr):
+def detect_pullback(
+    df,
+    structure,
+    atr
+):
 
     row = df.iloc[-2]
 
     price = row["close"]
     ema20 = row["ema20"]
 
-    distance = abs(price - ema20)
-
     if atr <= 0:
         return "NONE"
+
+    distance = abs(
+        price - ema20
+    )
 
     if distance <= 0.60 * atr:
 
@@ -436,43 +494,68 @@ def detect_retest(df, structure):
 
     recent = df.iloc[-7:-1]
 
+    atr = recent["atr"].iloc[-1]
+
+    if atr <= 0:
+        return "NONE"
+
+    tolerance = atr * 0.35
+
     last_high = structure["last_high"]
     last_low = structure["last_low"]
 
-    tolerance = recent["atr"].iloc[-1] * 0.35
+    # -------------------------
+    # BULLISH RETEST
+    # -------------------------
 
     if last_high is not None:
 
-        for i in range(len(recent) - 2):
+        for i in range(
+            len(recent) - 1
+        ):
 
             row1 = recent.iloc[i]
             row2 = recent.iloc[i + 1]
 
-            bullish_break = row1["close"] > last_high
+            breakout = (
+                row1["close"] > last_high
+            )
 
             retest = (
-                abs(row2["low"] - last_high) <= tolerance
+                abs(
+                    row2["low"] - last_high
+                ) <= tolerance
                 and row2["close"] > last_high
             )
 
-            if bullish_break and retest:
+            if breakout and retest:
                 return "BULLISH RETEST"
+
+    # -------------------------
+    # BEARISH RETEST
+    # -------------------------
 
     if last_low is not None:
 
-        for i in range(len(recent) - 2):
+        for i in range(
+            len(recent) - 1
+        ):
 
             row1 = recent.iloc[i]
             row2 = recent.iloc[i + 1]
 
-            bearish_break = row1["close"] < last_low
+            breakout = (
+                row1["close"] < last_low
+            )
 
             retest = (
-                abs(row2["high"] - last_low) <= tolerance
+                abs(
+                    row2["high"] - last_low
+                ) <= tolerance
                 and row2["close"] < last_low
             )
 
-            if bearish_break and retest:
+            if breakout and retest:
                 return "BEARISH RETEST"
 
     return "NONE"
@@ -489,7 +572,10 @@ def detect_ema_state(row):
     if atr <= 0:
         return "UNKNOWN"
 
-    spread = abs(row["ema20"] - row["ema50"])
+    spread = abs(
+        row["ema20"] - row["ema50"]
+    )
+
     spread_atr = spread / atr
 
     if spread_atr <= 0.35:
@@ -507,11 +593,13 @@ def detect_ema_expansion(df):
     previous = df.iloc[-3]
 
     current_spread = abs(
-        current["ema20"] - current["ema50"]
+        current["ema20"]
+        - current["ema50"]
     )
 
     previous_spread = abs(
-        previous["ema20"] - previous["ema50"]
+        previous["ema20"]
+        - previous["ema50"]
     )
 
     atr = current["atr"]
@@ -520,12 +608,18 @@ def detect_ema_expansion(df):
         return "FLAT"
 
     increase = (
-        current_spread - previous_spread
+        current_spread
+        - previous_spread
     ) / atr
 
-    current_atr_spread = current_spread / atr
+    current_ratio = (
+        current_spread / atr
+    )
 
-    if increase > 0.03 and current_atr_spread > 0.35:
+    if (
+        increase > 0.03
+        and current_ratio > 0.35
+    ):
         return "EXPANDING"
 
     if increase > 0:
@@ -545,22 +639,28 @@ def smart_levels(df, atr):
     price = df.iloc[-2]["close"]
 
     support_candidates = [
-        value for _, value in lows
+        value
+        for _, value in lows
         if value < price
     ]
 
     resistance_candidates = [
-        value for _, value in highs
+        value
+        for _, value in highs
         if value > price
     ]
 
     if support_candidates:
-        support = max(support_candidates)
+        support = max(
+            support_candidates
+        )
     else:
         support = price - 3 * atr
 
     if resistance_candidates:
-        resistance = min(resistance_candidates)
+        resistance = min(
+            resistance_candidates
+        )
     else:
         resistance = price + 3 * atr
 
@@ -568,12 +668,18 @@ def smart_levels(df, atr):
 
 
 # ============================================================
-# S/R PROXIMITY
+# S/R
 # ============================================================
 
-def detect_sr_proximity(price, support, resistance, atr):
+def detect_sr_proximity(
+    price,
+    support,
+    resistance,
+    atr
+):
 
     if atr <= 0:
+
         return {
             "support_distance": 999,
             "resistance_distance": 999,
@@ -590,15 +696,22 @@ def detect_sr_proximity(price, support, resistance, atr):
     )
 
     return {
-        "support_distance": support_distance,
-        "resistance_distance": resistance_distance,
-        "support_zone": support_distance <= 0.50,
-        "resistance_zone": resistance_distance <= 0.50
+        "support_distance":
+            support_distance,
+
+        "resistance_distance":
+            resistance_distance,
+
+        "support_zone":
+            support_distance <= 0.50,
+
+        "resistance_zone":
+            resistance_distance <= 0.50
     }
 
 
 # ============================================================
-# TIGHT RANGE
+# RANGE
 # ============================================================
 
 def detect_tight_range(
@@ -611,6 +724,7 @@ def detect_tight_range(
         return "UNKNOWN", 999
 
     width = resistance - support
+
     width_atr = width / atr
 
     if width_atr <= 0.50:
@@ -640,13 +754,13 @@ def detect_market_phase(
     if tight_range == "TIGHT RANGE":
         return "TIGHT RANGE"
 
-    bullish_ltf = (
+    bullish_evidence = (
         choch == "BULLISH CHoCH"
         or breakout == "BULLISH BREAKOUT"
         or candle.startswith("BULLISH")
     )
 
-    bearish_ltf = (
+    bearish_evidence = (
         choch == "BEARISH CHoCH"
         or breakout == "BEARISH BREAKOUT"
         or candle.startswith("BEARISH")
@@ -662,16 +776,28 @@ def detect_market_phase(
         and h1 == "BULLISH"
     )
 
-    if htf_bearish and bullish_ltf:
-        return "BEARISH HTF / BULLISH LTF TRANSITION"
+    if htf_bearish and bullish_evidence:
+        return (
+            "BEARISH HTF / "
+            "BULLISH LTF TRANSITION"
+        )
 
-    if htf_bullish and bearish_ltf:
-        return "BULLISH HTF / BEARISH LTF TRANSITION"
+    if htf_bullish and bearish_evidence:
+        return (
+            "BULLISH HTF / "
+            "BEARISH LTF TRANSITION"
+        )
 
-    if structure == "BULLISH" and bos == "BULLISH BOS":
+    if (
+        structure == "BULLISH"
+        and bos == "BULLISH BOS"
+    ):
         return "BULLISH CONTINUATION"
 
-    if structure == "BEARISH" and bos == "BEARISH BOS":
+    if (
+        structure == "BEARISH"
+        and bos == "BEARISH BOS"
+    ):
         return "BEARISH CONTINUATION"
 
     if structure == "BULLISH":
@@ -684,7 +810,7 @@ def detect_market_phase(
 
 
 # ============================================================
-# SCORE
+# SIGNAL SCORE
 # ============================================================
 
 def calculate_score(
@@ -706,13 +832,14 @@ def calculate_score(
     buy = 0
     sell = 0
 
-    # MTF
-    for direction, weight in [
+    timeframe_weights = [
         (h4, 15),
         (h1, 20),
         (m30, 15),
         (m15, 10)
-    ]:
+    ]
+
+    for direction, weight in timeframe_weights:
 
         if direction == "BULLISH":
             buy += weight
@@ -783,7 +910,213 @@ def calculate_score(
     elif retest == "BEARISH RETEST":
         sell += 7
 
-    return min(buy, 100), min(sell, 100)
+    return (
+        min(buy, 100),
+        min(sell, 100)
+    )
+
+
+# ============================================================
+# CONFIDENCE ENGINE V1.6.6
+# ============================================================
+
+def calculate_confidence(
+    buy_score,
+    sell_score,
+    h4,
+    h1,
+    m30,
+    m15,
+    structure,
+    phase,
+    bos,
+    choch,
+    breakout,
+    candle,
+    retest,
+    ema_state,
+    ema_expansion,
+    tight_range,
+    range_width_atr,
+    sr,
+    rsi
+):
+
+    dominant_score = max(
+        buy_score,
+        sell_score
+    )
+
+    confidence = 0
+
+    # --------------------------------------------------------
+    # BASE SIGNAL STRENGTH
+    # --------------------------------------------------------
+
+    confidence += dominant_score * 0.35
+
+    # --------------------------------------------------------
+    # HTF ALIGNMENT
+    # --------------------------------------------------------
+
+    if h4 == h1:
+
+        if h4 in ["BULLISH", "BEARISH"]:
+            confidence += 15
+
+    # --------------------------------------------------------
+    # MTF ALIGNMENT
+    # --------------------------------------------------------
+
+    bullish_count = [
+        h4,
+        h1,
+        m30,
+        m15
+    ].count("BULLISH")
+
+    bearish_count = [
+        h4,
+        h1,
+        m30,
+        m15
+    ].count("BEARISH")
+
+    if bullish_count >= 3:
+        confidence += 10
+
+    elif bearish_count >= 3:
+        confidence += 10
+
+    # --------------------------------------------------------
+    # STRUCTURE
+    # --------------------------------------------------------
+
+    if structure in [
+        "BULLISH",
+        "BEARISH"
+    ]:
+        confidence += 8
+
+    else:
+        confidence -= 8
+
+    # --------------------------------------------------------
+    # BOS / CHOCH
+    # --------------------------------------------------------
+
+    if bos != "NONE":
+        confidence += 12
+
+    elif choch != "NONE":
+        confidence += 7
+
+    # --------------------------------------------------------
+    # BREAKOUT
+    # --------------------------------------------------------
+
+    if breakout != "NONE":
+        confidence += 6
+
+    # --------------------------------------------------------
+    # CANDLE
+    # --------------------------------------------------------
+
+    if candle != "NONE":
+        confidence += 4
+
+    # --------------------------------------------------------
+    # RETEST
+    # --------------------------------------------------------
+
+    if retest != "NONE":
+        confidence += 8
+
+    # --------------------------------------------------------
+    # EMA
+    # --------------------------------------------------------
+
+    if ema_state == "EXPANDED":
+        confidence += 7
+
+    elif ema_state == "TIGHT":
+        confidence -= 3
+
+    elif ema_state == "COMPRESSION":
+        confidence -= 8
+
+    if ema_expansion == "EXPANDING":
+        confidence += 5
+
+    elif ema_expansion == "FLAT":
+        confidence -= 3
+
+    # --------------------------------------------------------
+    # TIGHT RANGE
+    # --------------------------------------------------------
+
+    if tight_range == "TIGHT RANGE":
+
+        confidence -= 20
+
+    elif tight_range == "NORMAL RANGE":
+
+        confidence -= 5
+
+    # --------------------------------------------------------
+    # TRANSITION
+    # --------------------------------------------------------
+
+    if "TRANSITION" in phase:
+
+        confidence -= 8
+
+    # --------------------------------------------------------
+    # S/R
+    # --------------------------------------------------------
+
+    if (
+        sr["support_zone"]
+        and sr["resistance_zone"]
+    ):
+
+        confidence -= 10
+
+    elif (
+        sr["support_zone"]
+        or sr["resistance_zone"]
+    ):
+
+        confidence -= 5
+
+    # --------------------------------------------------------
+    # RSI
+    # --------------------------------------------------------
+
+    if 40 <= rsi <= 60:
+        confidence += 2
+
+    elif rsi >= 75 or rsi <= 25:
+        confidence -= 8
+
+    # --------------------------------------------------------
+    # RANGE EXTREME
+    # --------------------------------------------------------
+
+    if range_width_atr <= 0.30:
+        confidence -= 5
+
+    confidence = int(
+        max(
+            0,
+            min(
+                100,
+                confidence
+            )
+        )
+    )
+
+    return confidence
 
 
 # ============================================================
@@ -807,78 +1140,68 @@ def calculate_entry_quality(
 ):
 
     quality = 100
-    reasons = []
 
-    # Tight range
     if tight_range == "TIGHT RANGE":
         quality -= 25
-        reasons.append("Tight range")
 
-    # Mixed structure
     if structure == "MIXED":
         quality -= 15
-        reasons.append("Mixed structure")
 
-    # EMA compression
     if ema_state == "COMPRESSION":
         quality -= 15
-        reasons.append("EMA compression")
 
     elif ema_state == "TIGHT":
         quality -= 7
-        reasons.append("EMA tight")
 
-    # No expansion
     if ema_expansion == "FLAT":
         quality -= 5
 
-    # Breakout
     if breakout != "NONE":
         quality += 5
 
-    # BOS
     if bos != "NONE":
         quality += 8
 
-    # CHoCH
     if choch != "NONE":
         quality += 4
 
-    # Retest
     if retest != "NONE":
         quality += 8
 
-    # Pullback
     if pullback != "NONE":
         quality += 3
 
-    # Candle
     if candle != "NONE":
         quality += 3
 
-    # S/R
-    if sr["support_zone"]:
-        quality -= 10
-        reasons.append("Price near support")
-
-    if sr["resistance_zone"]:
-        quality -= 10
-        reasons.append("Price near resistance")
-
-    # RSI exhaustion
-    if rsi >= 75:
+    if (
+        sr["support_zone"]
+        and sr["resistance_zone"]
+    ):
         quality -= 15
-        reasons.append("Extreme overbought")
 
-    elif rsi <= 25:
+    else:
+
+        if sr["support_zone"]:
+            quality -= 10
+
+        if sr["resistance_zone"]:
+            quality -= 10
+
+    if rsi >= 75 or rsi <= 25:
         quality -= 15
-        reasons.append("Extreme oversold")
 
-    return max(0, min(100, quality)), reasons
+    return max(
+        0,
+        min(
+            100,
+            quality
+        )
+    )
 
 
 # ============================================================
-# CHOCH CONFLICT FILTER
+# CONFLICT FILTER
 # ============================================================
 
 def conflict_filter(
@@ -901,57 +1224,92 @@ def conflict_filter(
     sell_blocked = False
     buy_blocked = False
 
-    if htf_bearish and choch == "BULLISH CHoCH":
+    if (
+        htf_bearish
+        and choch == "BULLISH CHoCH"
+        and bos != "BEARISH BOS"
+    ):
+        sell_blocked = True
 
-        if bos != "BEARISH BOS":
-            sell_blocked = True
-
-    if htf_bullish and choch == "BEARISH CHoCH":
-
-        if bos != "BULLISH BOS":
-            buy_blocked = True
+    if (
+        htf_bullish
+        and choch == "BEARISH CHoCH"
+        and bos != "BULLISH BOS"
+    ):
+        buy_blocked = True
 
     return buy_blocked, sell_blocked
 
 
 # ============================================================
-# NEXT TRIGGER
+# TRIGGER ENGINE
 # ============================================================
 
-def build_dual_triggers(
+def build_trigger_engine(
     support,
     resistance,
-    tight_range
+    tight_range,
+    phase,
+    choch,
+    breakout
 ):
+
+    sell_trigger = (
+        f"Break support {support:.2f}"
+        "\n→ bearish BOS"
+        "\n→ retest"
+        "\n→ bearish confirmation"
+    )
+
+    buy_trigger = (
+        f"Break resistance {resistance:.2f}"
+        "\n→ bullish BOS"
+        "\n→ retest"
+        "\n→ bullish confirmation"
+    )
 
     if tight_range == "TIGHT RANGE":
 
         return (
-            "🔴 SELL TRIGGER\n"
-            f"Break support {support:.2f}\n"
-            "→ bearish BOS\n"
-            "→ retest\n"
-            "→ bearish candle confirmation\n\n"
+            "🔴 SELL WATCH\n"
+            + sell_trigger
+            + "\n\n"
+            "🟢 BUY WATCH\n"
+            + buy_trigger
+        )
 
-            "🟢 BUY TRIGGER\n"
-            f"Break resistance {resistance:.2f}\n"
-            "→ bullish BOS\n"
-            "→ retest\n"
-            "→ bullish candle confirmation"
+    if (
+        phase
+        == "BEARISH HTF / BULLISH LTF TRANSITION"
+    ):
+
+        return (
+            "🟢 BUY WATCH\n"
+            + buy_trigger
+            + "\n\n"
+            "🔴 SELL INVALIDATION\n"
+            + sell_trigger
+        )
+
+    if (
+        phase
+        == "BULLISH HTF / BEARISH LTF TRANSITION"
+    ):
+
+        return (
+            "🔴 SELL WATCH\n"
+            + sell_trigger
+            + "\n\n"
+            "🟢 BUY INVALIDATION\n"
+            + buy_trigger
         )
 
     return (
-        "🔴 SELL TRIGGER\n"
-        f"Break support {support:.2f}\n"
-        "→ bearish BOS / CHoCH\n"
-        "→ retest\n"
-        "→ bearish confirmation\n\n"
-
-        "🟢 BUY TRIGGER\n"
-        f"Break resistance {resistance:.2f}\n"
-        "→ bullish BOS / CHoCH\n"
-        "→ retest\n"
-        "→ bullish confirmation"
+        "🔴 SELL WATCH\n"
+        + sell_trigger
+        + "\n\n"
+        "🟢 BUY WATCH\n"
+        + buy_trigger
     )
 
 
@@ -981,7 +1339,7 @@ def trade_plan(
 
 
 # ============================================================
-# MAIN ANALYSIS
+# MAIN
 # ============================================================
 
 def analyze():
@@ -998,14 +1356,34 @@ def analyze():
     for name, interval in timeframes.items():
 
         df = get_data(interval)
+
         df = add_indicators(df)
 
         datasets[name] = df
 
-    h4 = analyze_timeframe(datasets["H4"])
-    h1 = analyze_timeframe(datasets["H1"])
-    m30 = analyze_timeframe(datasets["M30"])
-    m15 = analyze_timeframe(datasets["M15"])
+    # --------------------------------------------------------
+    # MTF
+    # --------------------------------------------------------
+
+    h4 = analyze_timeframe(
+        datasets["H4"]
+    )
+
+    h1 = analyze_timeframe(
+        datasets["H1"]
+    )
+
+    m30 = analyze_timeframe(
+        datasets["M30"]
+    )
+
+    m15 = analyze_timeframe(
+        datasets["M15"]
+    )
+
+    # --------------------------------------------------------
+    # M30 ENGINE
+    # --------------------------------------------------------
 
     df = datasets["M30"]
 
@@ -1041,9 +1419,13 @@ def analyze():
         structure
     )
 
-    ema_state = detect_ema_state(row)
+    ema_state = detect_ema_state(
+        row
+    )
 
-    ema_expansion = detect_ema_expansion(df)
+    ema_expansion = detect_ema_expansion(
+        df
+    )
 
     support, resistance = smart_levels(
         df,
@@ -1057,10 +1439,12 @@ def analyze():
         atr
     )
 
-    tight_range, range_width_atr = detect_tight_range(
-        support,
-        resistance,
-        atr
+    tight_range, range_width_atr = (
+        detect_tight_range(
+            support,
+            resistance,
+            atr
+        )
     )
 
     phase = detect_market_phase(
@@ -1090,7 +1474,29 @@ def analyze():
         rsi
     )
 
-    quality, quality_reasons = calculate_entry_quality(
+    confidence = calculate_confidence(
+        buy_score,
+        sell_score,
+        h4,
+        h1,
+        m30,
+        m15,
+        structure["structure"],
+        phase,
+        bos,
+        choch,
+        breakout,
+        candle,
+        retest,
+        ema_state,
+        ema_expansion,
+        tight_range,
+        range_width_atr,
+        sr,
+        rsi
+    )
+
+    quality = calculate_entry_quality(
         structure["structure"],
         phase,
         ema_state,
@@ -1106,15 +1512,17 @@ def analyze():
         rsi
     )
 
-    buy_blocked, sell_blocked = conflict_filter(
-        h4,
-        h1,
-        choch,
-        bos
+    buy_blocked, sell_blocked = (
+        conflict_filter(
+            h4,
+            h1,
+            choch,
+            bos
+        )
     )
 
     # ========================================================
-    # FINAL DECISION
+    # DECISION
     # ========================================================
 
     decision = "WAIT"
@@ -1125,48 +1533,49 @@ def analyze():
 
     else:
 
+        adjusted_buy = buy_score
+        adjusted_sell = sell_score
+
         if buy_blocked:
-            buy_score = min(buy_score, 40)
+            adjusted_buy = min(
+                adjusted_buy,
+                40
+            )
 
         if sell_blocked:
-            sell_score = min(sell_score, 40)
+            adjusted_sell = min(
+                adjusted_sell,
+                40
+            )
 
         if (
-            buy_score >= 70
-            and buy_score > sell_score
+            adjusted_buy >= 70
+            and adjusted_buy > adjusted_sell
             and not sr["resistance_zone"]
+            and quality >= 60
         ):
+
             decision = "BUY"
 
         elif (
-            sell_score >= 70
-            and sell_score > buy_score
+            adjusted_sell >= 70
+            and adjusted_sell > adjusted_buy
             and not sr["support_zone"]
+            and quality >= 60
         ):
+
             decision = "SELL"
 
-        else:
-            decision = "WAIT"
-
     # ========================================================
-    # CONFIDENCE
+    # FINAL CONFIDENCE FOR WAIT
     # ========================================================
-
-    confidence = max(
-        buy_score,
-        sell_score
-    )
 
     if decision == "WAIT":
 
-        confidence = int(
-            confidence * 0.60
+        confidence = min(
+            confidence,
+            69
         )
-
-    confidence = max(
-        0,
-        min(100, confidence)
-    )
 
     # ========================================================
     # REASONS
@@ -1174,79 +1583,84 @@ def analyze():
 
     reasons = []
 
+    def add_reason(text):
+
+        if text not in reasons:
+            reasons.append(text)
+
     if structure["structure"] == "MIXED":
-        reasons.append("Market structure mixed")
+        add_reason("Market structure mixed")
 
     if ema_state == "COMPRESSION":
-        reasons.append("EMA20/EMA50 compression")
+        add_reason("EMA20/EMA50 compression")
+
+    elif ema_state == "TIGHT":
+        add_reason("EMA20/EMA50 tight")
+
+    if ema_expansion == "FLAT":
+        add_reason("EMA expansion flat")
 
     if tight_range == "TIGHT RANGE":
-        reasons.append(
+        add_reason(
             f"Tight range {range_width_atr:.2f} ATR"
         )
 
     if candle != "NONE":
-        reasons.append(candle)
-
-    if pullback != "NONE":
-        reasons.append(pullback)
-
-    if retest != "NONE":
-        reasons.append(retest)
+        add_reason(candle)
 
     if choch != "NONE":
-        reasons.append(choch)
+        add_reason(choch)
+
+    if bos != "NONE":
+        add_reason(bos)
 
     if breakout != "NONE":
-        reasons.append(breakout)
+        add_reason(breakout)
 
-    if phase == "BEARISH HTF / BULLISH LTF TRANSITION":
-        reasons.append(
-            "HTF bearish vs LTF bullish transition"
+    if pullback != "NONE":
+        add_reason(pullback)
+
+    if retest != "NONE":
+        add_reason(retest)
+
+    if liquidity != "NONE":
+        add_reason(liquidity)
+
+    if "TRANSITION" in phase:
+        add_reason(
+            "HTF/LTF directional conflict"
         )
 
-    elif phase == "BULLISH HTF / BEARISH LTF TRANSITION":
-        reasons.append(
-            "HTF bullish vs LTF bearish transition"
+    if (
+        sr["support_zone"]
+        and sr["resistance_zone"]
+    ):
+        add_reason(
+            "Price trapped between S/R"
         )
 
-    for reason in quality_reasons:
-        if reason not in reasons:
-            reasons.append(reason)
+    elif sr["support_zone"]:
+        add_reason(
+            "Price close to support"
+        )
+
+    elif sr["resistance_zone"]:
+        add_reason(
+            "Price close to resistance"
+        )
 
     # ========================================================
-    # TRIGGERS
+    # TRIGGER
     # ========================================================
 
-    if tight_range == "TIGHT RANGE":
-
-        next_trigger = build_dual_triggers(
-            support,
-            resistance,
-            tight_range
-        )
-
-    elif decision == "BUY":
-
-        next_trigger = (
-            f"BUY confirmed → monitor retest "
-            f"above {resistance:.2f}"
-        )
-
-    elif decision == "SELL":
-
-        next_trigger = (
-            f"SELL confirmed → monitor retest "
-            f"below {support:.2f}"
-        )
-
-    else:
-
-        next_trigger = build_dual_triggers(
-            support,
-            resistance,
-            tight_range
-        )
+    next_trigger = build_trigger_engine(
+        support,
+        resistance,
+        tight_range,
+        phase,
+        choch,
+        breakout
+    )
 
     # ========================================================
     # TRADE PLAN
@@ -1254,7 +1668,10 @@ def analyze():
 
     plan = ""
 
-    if decision in ["BUY", "SELL"]:
+    if decision in [
+        "BUY",
+        "SELL"
+    ]:
 
         sl, tp1, tp2 = trade_plan(
             decision,
@@ -1263,26 +1680,41 @@ def analyze():
         )
 
         plan = (
-            f"\n\n💰 TRADE PLAN\n"
-            f"Entry : {price:.2f}\n"
-            f"SL    : {sl:.2f}\n"
-            f"TP1   : {tp1:.2f}\n"
-            f"TP2   : {tp2:.2f}\n"
-            f"RR    : 1:1.5 / 1:2.5"
+            "\n\n💰 TRADE PLAN"
+            f"\nEntry : {price:.2f}"
+            f"\nSL    : {sl:.2f}"
+            f"\nTP1   : {tp1:.2f}"
+            f"\nTP2   : {tp2:.2f}"
+            "\nRR    : 1:1.5 / 1:2.5"
         )
 
     # ========================================================
-    # OUTPUT
+    # MESSAGE
     # ========================================================
 
+    icon = (
+        "🟢"
+        if decision == "BUY"
+        else "🔴"
+        if decision == "SELL"
+        else "⚪"
+    )
+
     message = (
-        "🤖 XAUUSD AI-STYLE V1.6.5\n"
+        "🤖 XAUUSD AI-STYLE V1.6.6\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
 
-        f"{'🟢' if decision == 'BUY' else '🔴' if decision == 'SELL' else '⚪'} "
-        f"{decision}\n"
-        f"📊 Confidence : {confidence}/100\n"
-        f"🎯 Entry Quality : {quality}/100\n\n"
+        f"{icon} {decision}\n\n"
+
+        "📊 SIGNAL SCORE\n"
+        f"BUY  : {buy_score}/100\n"
+        f"SELL : {sell_score}/100\n\n"
+
+        f"🧠 CONFIDENCE : "
+        f"{confidence}/100\n"
+
+        f"🎯 ENTRY QUALITY : "
+        f"{quality}/100\n\n"
 
         "📈 MULTI-TIMEFRAME\n"
         f"H4  : {h4}\n"
@@ -1291,7 +1723,8 @@ def analyze():
         f"M15 : {m15}\n\n"
 
         "🏗 MARKET STRUCTURE\n"
-        f"Structure : {structure['structure']}\n"
+        f"Structure : "
+        f"{structure['structure']}\n"
         f"High : {structure['high_label']}\n"
         f"Low  : {structure['low_label']}\n\n"
 
@@ -1299,8 +1732,8 @@ def analyze():
         f"{phase}\n\n"
 
         "📊 STRUCTURE EVENT\n"
-        f"BOS   : {bos}\n"
-        f"CHoCH : {choch}\n"
+        f"BOS       : {bos}\n"
+        f"CHoCH     : {choch}\n"
         f"Liquidity : {liquidity}\n"
         f"Breakout  : {breakout}\n"
         f"Candle    : {candle}\n"
@@ -1310,23 +1743,30 @@ def analyze():
         "📐 EMA ENGINE\n"
         f"EMA20 : {ema20:.2f}\n"
         f"EMA50 : {ema50:.2f}\n"
-        f"EMA Spread : {abs(ema20 - ema50) / atr:.2f} ATR\n"
-        f"Price → EMA20 : {abs(price - ema20) / atr:.2f} ATR\n"
+        f"EMA Spread : "
+        f"{abs(ema20 - ema50) / atr:.2f} ATR\n"
+        f"Price → EMA20 : "
+        f"{abs(price - ema20) / atr:.2f} ATR\n"
         f"EMA State : {ema_state}\n"
-        f"EMA Expansion : {ema_expansion}\n\n"
+        f"EMA Expansion : "
+        f"{ema_expansion}\n\n"
 
         "📦 MARKET RANGE\n"
         f"Range State : {tight_range}\n"
-        f"Range Width : {range_width_atr:.2f} ATR\n\n"
+        f"Range Width : "
+        f"{range_width_atr:.2f} ATR\n\n"
 
         f"💰 Price : {price:.2f}\n"
         f"RSI : {rsi:.2f}\n"
         f"ATR : {atr:.2f}\n\n"
 
         f"🟢 Support : {support:.2f}\n"
-        f"🔴 Resistance : {resistance:.2f}\n"
-        f"Support Distance : {sr['support_distance']:.2f} ATR\n"
-        f"Resistance Distance : {sr['resistance_distance']:.2f} ATR\n\n"
+        f"🔴 Resistance : "
+        f"{resistance:.2f}\n"
+        f"Support Distance : "
+        f"{sr['support_distance']:.2f} ATR\n"
+        f"Resistance Distance : "
+        f"{sr['resistance_distance']:.2f} ATR\n\n"
     )
 
     # ========================================================
@@ -1336,34 +1776,45 @@ def analyze():
     if tight_range == "TIGHT RANGE":
 
         message += (
-            "⚠️ TIGHT RANGE — BOTH SIDES BLOCKED\n"
-            "Market terlalu sempit untuk entry langsung.\n\n"
+            "⚠️ ENTRY BLOCKED\n"
+            "Market berada dalam "
+            "tight range.\n"
+            "Tunggu breakout + BOS + "
+            "retest.\n\n"
         )
 
     else:
 
         if sell_blocked:
+
             message += (
                 "⚠️ SELL BLOCKED\n"
-                "Bullish CHoCH melawan HTF bearish.\n\n"
+                "Bullish CHoCH melawan "
+                "HTF bearish.\n\n"
             )
 
         if buy_blocked:
+
             message += (
                 "⚠️ BUY BLOCKED\n"
-                "Bearish CHoCH melawan HTF bullish.\n\n"
+                "Bearish CHoCH melawan "
+                "HTF bullish.\n\n"
             )
 
         if sr["support_zone"]:
+
             message += (
                 "⚠️ SELL ZONE BLOCKED\n"
-                "Price too close to support.\n\n"
+                "Price terlalu dekat "
+                "support.\n\n"
             )
 
         if sr["resistance_zone"]:
+
             message += (
                 "⚠️ BUY ZONE BLOCKED\n"
-                "Price too close to resistance.\n\n"
+                "Price terlalu dekat "
+                "resistance.\n\n"
             )
 
     # ========================================================
@@ -1372,27 +1823,26 @@ def analyze():
 
     if reasons:
 
-        message += "🧠 REASONS\n"
+        message += "🧠 MARKET REASONS\n"
 
-        unique_reasons = []
-
-        for reason in reasons:
-
-            if reason not in unique_reasons:
-                unique_reasons.append(reason)
-
-        for reason in unique_reasons[:8]:
+        for reason in reasons[:10]:
             message += f"• {reason}\n"
 
         message += "\n"
+
+    # ========================================================
+    # TRIGGER
+    # ========================================================
 
     message += (
         "🎯 NEXT TRIGGER\n"
         f"{next_trigger}"
         f"{plan}\n\n"
 
-        "📊 SCORE\n"
-        f"BUY  {buy_score} / SELL {sell_score}"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "📊 FINAL SCORE\n"
+        f"BUY {buy_score} / "
+        f"SELL {sell_score}"
     )
 
     return message
@@ -1421,4 +1871,6 @@ if __name__ == "__main__":
 
         print(error_message)
 
-        send_telegram(error_message)
+        send_telegram(
+            error_message
+        )
