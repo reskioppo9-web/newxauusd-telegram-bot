@@ -4,8 +4,9 @@ import pandas as pd
 import numpy as np
 
 # ============================================================
-# XAUUSD AI-STYLE V1.6.7
+# XAUUSD AI-STYLE V1.6.7 FIXED
 # CONFIDENCE CALIBRATION + HTF/LTF BIAS ENGINE
+# TRANSITION + TRIGGER LOGIC FIX
 # ============================================================
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
@@ -766,13 +767,15 @@ def detect_tight_range(
 
 
 # ============================================================
-# MARKET PHASE V1.6.7
+# MARKET PHASE V1.6.7 FIXED
 # ============================================================
 
 def detect_market_phase(
     structure,
     h4,
     h1,
+    m30,
+    m15,
     bos,
     choch,
     breakout,
@@ -787,17 +790,9 @@ def detect_market_phase(
     if tight_range == "TIGHT RANGE":
         return "TIGHT RANGE"
 
-    bullish_evidence = (
-        choch == "BULLISH CHoCH"
-        or breakout == "BULLISH BREAKOUT"
-        or candle.startswith("BULLISH")
-    )
-
-    bearish_evidence = (
-        choch == "BEARISH CHoCH"
-        or breakout == "BEARISH BREAKOUT"
-        or candle.startswith("BEARISH")
-    )
+    # --------------------------------------------------------
+    # HTF BIAS
+    # --------------------------------------------------------
 
     htf_bearish = (
         h4 == "BEARISH"
@@ -810,17 +805,45 @@ def detect_market_phase(
     )
 
     # --------------------------------------------------------
+    # IMPORTANT FIX
+    #
+    # Candle rejection/momentum alone is NOT enough
+    # to call a true LTF transition.
+    #
+    # Transition requires structural evidence:
+    # CHoCH or breakout.
+    # --------------------------------------------------------
+
+    bullish_transition_evidence = (
+        choch == "BULLISH CHoCH"
+        or breakout == "BULLISH BREAKOUT"
+    )
+
+    bearish_transition_evidence = (
+        choch == "BEARISH CHoCH"
+        or breakout == "BEARISH BREAKOUT"
+    )
+
+    # --------------------------------------------------------
     # HTF/LTF TRANSITION
     # --------------------------------------------------------
 
-    if htf_bearish and bullish_evidence:
+    if (
+        htf_bearish
+        and bullish_transition_evidence
+        and not bearish_transition_evidence
+    ):
 
         return (
             "BEARISH HTF / "
             "BULLISH LTF TRANSITION"
         )
 
-    if htf_bullish and bearish_evidence:
+    if (
+        htf_bullish
+        and bearish_transition_evidence
+        and not bullish_transition_evidence
+    ):
 
         return (
             "BULLISH HTF / "
@@ -927,7 +950,7 @@ def detect_htf_bias(h4, h1):
 
 
 # ============================================================
-# LTF BIAS
+# LTF BIAS V1.6.7 FIXED
 # ============================================================
 
 def detect_ltf_bias(
@@ -938,17 +961,27 @@ def detect_ltf_bias(
     candle
 ):
 
-    bullish_evidence = (
+    # --------------------------------------------------------
+    # IMPORTANT FIX
+    #
+    # Candle alone does NOT create LTF transition.
+    #
+    # Structural event > candle evidence.
+    # --------------------------------------------------------
+
+    bullish_structure_event = (
         choch == "BULLISH CHoCH"
         or breakout == "BULLISH BREAKOUT"
-        or candle.startswith("BULLISH")
     )
 
-    bearish_evidence = (
+    bearish_structure_event = (
         choch == "BEARISH CHoCH"
         or breakout == "BEARISH BREAKOUT"
-        or candle.startswith("BEARISH")
     )
+
+    # --------------------------------------------------------
+    # DIRECT MTF ALIGNMENT
+    # --------------------------------------------------------
 
     if (
         m30 == "BULLISH"
@@ -964,17 +997,33 @@ def detect_ltf_bias(
 
         return "BEARISH"
 
-    if bullish_evidence and not bearish_evidence:
+    # --------------------------------------------------------
+    # STRUCTURAL TRANSITION
+    # --------------------------------------------------------
+
+    if (
+        bullish_structure_event
+        and not bearish_structure_event
+    ):
 
         return "BULLISH TRANSITION"
 
-    if bearish_evidence and not bullish_evidence:
+    if (
+        bearish_structure_event
+        and not bullish_structure_event
+    ):
 
         return "BEARISH TRANSITION"
+
+    # --------------------------------------------------------
+    # NEUTRAL
+    # --------------------------------------------------------
 
     if (
         m30 == "NEUTRAL"
         and m15 == "NEUTRAL"
+        and not bullish_structure_event
+        and not bearish_structure_event
     ):
 
         return "NEUTRAL"
@@ -1114,7 +1163,7 @@ def confidence_label(confidence):
 
 
 # ============================================================
-# CONFIDENCE ENGINE V1.6.7
+# CONFIDENCE ENGINE
 # ============================================================
 
 def calculate_confidence(
@@ -1149,16 +1198,9 @@ def calculate_confidence(
 
     confidence = 20.0
 
-    # --------------------------------------------------------
-    # BASE SIGNAL STRENGTH
-    # --------------------------------------------------------
-
     confidence += dominant_score * 0.25
 
-    # --------------------------------------------------------
-    # HTF BIAS
-    # --------------------------------------------------------
-
+    # HTF
     if htf_bias in [
         "BULLISH",
         "BEARISH"
@@ -1170,10 +1212,7 @@ def calculate_confidence(
 
         confidence -= 2
 
-    # --------------------------------------------------------
-    # MTF ALIGNMENT
-    # --------------------------------------------------------
-
+    # MTF alignment
     directions = [
         h4,
         h1,
@@ -1195,10 +1234,7 @@ def calculate_confidence(
     elif bearish_count >= 3:
         confidence += 8
 
-    # --------------------------------------------------------
-    # LTF BIAS
-    # --------------------------------------------------------
-
+    # LTF
     if ltf_bias in [
         "BULLISH",
         "BEARISH"
@@ -1214,10 +1250,7 @@ def calculate_confidence(
 
         confidence -= 2
 
-    # --------------------------------------------------------
-    # STRUCTURE
-    # --------------------------------------------------------
-
+    # Structure
     if structure in [
         "BULLISH",
         "BEARISH"
@@ -1229,10 +1262,7 @@ def calculate_confidence(
 
         confidence -= 4
 
-    # --------------------------------------------------------
-    # BOS / CHOCH
-    # --------------------------------------------------------
-
+    # BOS / CHoCH
     if bos != "NONE":
 
         confidence += 12
@@ -1241,42 +1271,27 @@ def calculate_confidence(
 
         confidence += 6
 
-    # --------------------------------------------------------
-    # BREAKOUT
-    # --------------------------------------------------------
-
+    # Breakout
     if breakout != "NONE":
 
         confidence += 4
 
-    # --------------------------------------------------------
-    # CANDLE
-    # --------------------------------------------------------
-
+    # Candle
     if candle != "NONE":
 
         confidence += 3
 
-    # --------------------------------------------------------
-    # LIQUIDITY
-    # --------------------------------------------------------
-
+    # Liquidity
     if liquidity != "NONE":
 
         confidence += 4
 
-    # --------------------------------------------------------
-    # RETEST
-    # --------------------------------------------------------
-
+    # Retest
     if retest != "NONE":
 
         confidence += 7
 
-    # --------------------------------------------------------
-    # EMA STATE
-    # --------------------------------------------------------
-
+    # EMA state
     if ema_state == "EXPANDED":
 
         confidence += 4
@@ -1289,10 +1304,7 @@ def calculate_confidence(
 
         confidence -= 5
 
-    # --------------------------------------------------------
-    # EMA EXPANSION
-    # --------------------------------------------------------
-
+    # EMA expansion
     if ema_expansion == "EXPANDING":
 
         confidence += 3
@@ -1305,10 +1317,7 @@ def calculate_confidence(
 
         confidence -= 2
 
-    # --------------------------------------------------------
-    # RANGE
-    # --------------------------------------------------------
-
+    # Range
     if tight_range == "TIGHT RANGE":
 
         confidence -= 15
@@ -1317,18 +1326,12 @@ def calculate_confidence(
 
         confidence -= 3
 
-    # --------------------------------------------------------
-    # TRANSITION
-    # --------------------------------------------------------
-
+    # Transition
     if "TRANSITION" in phase:
 
         confidence -= 4
 
-    # --------------------------------------------------------
     # S/R
-    # --------------------------------------------------------
-
     if (
         sr["support_zone"]
         and sr["resistance_zone"]
@@ -1343,10 +1346,7 @@ def calculate_confidence(
 
         confidence -= 3
 
-    # --------------------------------------------------------
     # RSI
-    # --------------------------------------------------------
-
     if 40 <= rsi <= 60:
 
         confidence += 2
@@ -1358,17 +1358,10 @@ def calculate_confidence(
 
         confidence -= 6
 
-    # --------------------------------------------------------
-    # VERY NARROW RANGE
-    # --------------------------------------------------------
-
+    # Very narrow range
     if range_width_atr <= 0.30:
 
         confidence -= 4
-
-    # --------------------------------------------------------
-    # MINIMUM FLOOR
-    # --------------------------------------------------------
 
     confidence = max(
         15,
@@ -1511,7 +1504,7 @@ def conflict_filter(
 
 
 # ============================================================
-# TRIGGER ENGINE
+# TRIGGER ENGINE V1.6.7 FIXED
 # ============================================================
 
 def build_trigger_engine(
@@ -1537,6 +1530,10 @@ def build_trigger_engine(
         "\n→ bullish confirmation"
     )
 
+    # --------------------------------------------------------
+    # TIGHT RANGE
+    # --------------------------------------------------------
+
     if tight_range == "TIGHT RANGE":
 
         return (
@@ -1547,6 +1544,10 @@ def build_trigger_engine(
             + buy_trigger
         )
 
+    # --------------------------------------------------------
+    # BEARISH HTF / BULLISH LTF TRANSITION
+    # --------------------------------------------------------
+
     if (
         phase
         == "BEARISH HTF / BULLISH LTF TRANSITION"
@@ -1556,9 +1557,13 @@ def build_trigger_engine(
             "🟢 BUY WATCH\n"
             + buy_trigger
             + "\n\n"
-            "🔴 SELL INVALIDATION\n"
+            "🔴 SELL WATCH\n"
             + sell_trigger
         )
+
+    # --------------------------------------------------------
+    # BULLISH HTF / BEARISH LTF TRANSITION
+    # --------------------------------------------------------
 
     if (
         phase
@@ -1569,33 +1574,73 @@ def build_trigger_engine(
             "🔴 SELL WATCH\n"
             + sell_trigger
             + "\n\n"
-            "🟢 BUY INVALIDATION\n"
+            "🟢 BUY WATCH\n"
             + buy_trigger
         )
+
+    # --------------------------------------------------------
+    # BEARISH EXTENSION
+    # --------------------------------------------------------
 
     if phase == "BEARISH TREND / EXTENSION":
 
         return (
             "🔴 SELL CONTINUATION WATCH\n"
-            + "Wait pullback toward EMA20 / resistance"
-            + "\n→ bearish rejection"
-            + "\n→ continuation confirmation"
-            + "\n\n"
-            "🟢 BUY INVALIDATION\n"
+            "Wait pullback toward EMA20 / resistance"
+            "\n→ bearish rejection"
+            "\n→ continuation confirmation"
+            "\n\n"
+            "🟢 BUY WATCH\n"
             + buy_trigger
         )
+
+    # --------------------------------------------------------
+    # BULLISH EXTENSION
+    # --------------------------------------------------------
 
     if phase == "BULLISH TREND / EXTENSION":
 
         return (
             "🟢 BUY CONTINUATION WATCH\n"
-            + "Wait pullback toward EMA20 / support"
-            + "\n→ bullish rejection"
-            + "\n→ continuation confirmation"
-            + "\n\n"
-            "🔴 SELL INVALIDATION\n"
+            "Wait pullback toward EMA20 / support"
+            "\n→ bullish rejection"
+            "\n→ continuation confirmation"
+            "\n\n"
+            "🔴 SELL WATCH\n"
             + sell_trigger
         )
+
+    # --------------------------------------------------------
+    # BEARISH TREND
+    # --------------------------------------------------------
+
+    if phase == "BEARISH TREND":
+
+        return (
+            "🔴 SELL WATCH\n"
+            + sell_trigger
+            + "\n\n"
+            "🟢 BUY WATCH\n"
+            + buy_trigger
+        )
+
+    # --------------------------------------------------------
+    # BULLISH TREND
+    # --------------------------------------------------------
+
+    if phase == "BULLISH TREND":
+
+        return (
+            "🟢 BUY WATCH\n"
+            + buy_trigger
+            + "\n\n"
+            "🔴 SELL WATCH\n"
+            + sell_trigger
+        )
+
+    # --------------------------------------------------------
+    # DEFAULT
+    # --------------------------------------------------------
 
     return (
         "🔴 SELL WATCH\n"
@@ -1773,6 +1818,8 @@ def analyze():
         structure["structure"],
         h4,
         h1,
+        m30,
+        m15,
         bos,
         choch,
         breakout,
@@ -2034,12 +2081,10 @@ def analyze():
     if "TRANSITION" in phase:
 
         add_reason(
-            "HTF/LTF directional transition"
+            "HTF/LTF structural transition"
         )
 
-    if (
-        "EXTENSION" in phase
-    ):
+    if "EXTENSION" in phase:
 
         add_reason(
             "Price extended from EMA20"
@@ -2118,7 +2163,7 @@ def analyze():
     )
 
     message = (
-        "🤖 XAUUSD AI-STYLE V1.6.7\n"
+        "🤖 XAUUSD AI-STYLE V1.6.7 FIXED\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
 
         f"{icon} {decision}\n\n"
